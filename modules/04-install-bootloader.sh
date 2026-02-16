@@ -27,6 +27,7 @@ apt install -y $APT_FLAGS \
     linux-image-generic \
     linux-headers-generic \
     $GRUB_PKG \
+    dracut \
     efibootmgr \
     bash-completion \
     zstd \
