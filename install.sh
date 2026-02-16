@@ -37,8 +37,8 @@ interactive_config() {
     echo "  1) Ubuntu 24.04 LTS (Noble Numbat) - Recomendado ✅"
     echo "  2) Ubuntu 22.04 LTS (Jammy Jellyfish)"
     echo "  3) Ubuntu 20.04 LTS (Focal Fossa)"
-    echo "  4) Ubuntu 25.10 (Questing Quokka)"
-    echo "  5) Ubuntu 26.04 (Resolute Raccoon) - Desarrollo"
+    echo "  4) Ubuntu 24.10 (Oracular Oriole)"
+    echo "  5) Ubuntu 25.04 (Plucky Puffin) - Desarrollo"
     echo ""
     read -p "Selecciona versión (1-5) [1]: " ver_choice
     ver_choice=${ver_choice:-1}
@@ -47,8 +47,8 @@ interactive_config() {
         1) UBUNTU_VERSION="noble" ;;
         2) UBUNTU_VERSION="jammy" ;;
         3) UBUNTU_VERSION="focal" ;;
-        4) UBUNTU_VERSION="questing" ;;
-        5) UBUNTU_VERSION="resolute" ;;
+        4) UBUNTU_VERSION="oracular" ;;
+        5) UBUNTU_VERSION="plucky" ;;
         *) UBUNTU_VERSION="noble" ;;
     esac
     
@@ -78,6 +78,58 @@ interactive_config() {
         read -p "Usuario: " USERNAME
     done
     echo -e "${GREEN}✓ Usuario: $USERNAME${NC}"
+    
+    # Contraseña del usuario
+    echo ""
+    echo "Contraseña para $USERNAME:"
+    while true; do
+        read -s -p "Contraseña: " USER_PASSWORD
+        echo ""
+        read -s -p "Confirmar contraseña: " USER_PASSWORD_CONFIRM
+        echo ""
+        
+        if [ "$USER_PASSWORD" = "$USER_PASSWORD_CONFIRM" ]; then
+            if [ -n "$USER_PASSWORD" ]; then
+                echo -e "${GREEN}✓ Contraseña configurada${NC}"
+                break
+            else
+                echo -e "${RED}La contraseña no puede estar vacía${NC}"
+            fi
+        else
+            echo -e "${RED}Las contraseñas no coinciden, intenta de nuevo${NC}"
+            echo ""
+        fi
+    done
+    
+    # Contraseña de root
+    echo ""
+    read -p "¿Usar la misma contraseña para root? (s/n) [s]: " same_pass
+    if [[ ${same_pass:-s} =~ ^[SsYy]$ ]]; then
+        ROOT_PASSWORD="$USER_PASSWORD"
+        echo -e "${GREEN}✓ Root usará la misma contraseña${NC}"
+    else
+        echo ""
+        echo "Contraseña para root:"
+        while true; do
+            read -s -p "Contraseña root: " ROOT_PASSWORD
+            echo ""
+            read -s -p "Confirmar contraseña root: " ROOT_PASSWORD_CONFIRM
+            echo ""
+            
+            if [ "$ROOT_PASSWORD" = "$ROOT_PASSWORD_CONFIRM" ]; then
+                if [ -n "$ROOT_PASSWORD" ]; then
+                    echo -e "${GREEN}✓ Contraseña de root configurada${NC}"
+                    break
+                else
+                    echo -e "${RED}La contraseña no puede estar vacía${NC}"
+                fi
+            else
+                echo -e "${RED}Las contraseñas no coinciden, intenta de nuevo${NC}"
+                echo ""
+            fi
+        done
+    fi
+    
     echo ""
     read -p "Presiona Enter para continuar..."
     
@@ -189,6 +241,8 @@ interactive_config() {
     echo "  • Versión: Ubuntu $UBUNTU_VERSION"
     echo "  • Hostname: $HOSTNAME"
     echo "  • Usuario: $USERNAME"
+    echo "  • Contraseña usuario: ******* (configurada)"
+    echo "  • Contraseña root: $([ "$ROOT_PASSWORD" = "$USER_PASSWORD" ] && echo "******* (misma)" || echo "******* (diferente)")"
     echo "  • Tipo: $([ "$IS_LAPTOP" = "true" ] && echo "Laptop" || echo "Desktop")"
     echo ""
     echo -e "${YELLOW}Hardware:${NC}"
@@ -240,6 +294,12 @@ TARGET="${TARGET:-/mnt/ubuntu}"
 HOSTNAME="$HOSTNAME"
 USERNAME="$USERNAME"
 
+# === CONTRASEÑAS (almacenadas temporalmente) ===
+# IMPORTANTE: Este archivo contiene contraseñas en texto plano
+# Elimínalo después de la instalación: rm config.env
+USER_PASSWORD="$USER_PASSWORD"
+ROOT_PASSWORD="$ROOT_PASSWORD"
+
 # === HARDWARE ===
 DISK_TYPE="${DISK_TYPE:-auto}"
 IS_LAPTOP="$IS_LAPTOP"
@@ -262,6 +322,11 @@ USE_NO_INSTALL_RECOMMENDS="$USE_NO_INSTALL_RECOMMENDS"
 DUAL_BOOT="${DUAL_BOOT:-false}"
 UBUNTU_SIZE_GB="${UBUNTU_SIZE_GB:-50}"
 EOF
+
+    # Hacer el archivo legible solo por root
+    chmod 600 "$CONFIG_FILE"
+    echo -e "${YELLOW}⚠ Archivo contiene contraseñas en texto plano${NC}"
+    echo -e "${YELLOW}⚠ Elimínalo después: rm $CONFIG_FILE${NC}"
 }
 
 ##############################################################################
@@ -395,6 +460,7 @@ show_menu() {
     echo "  4) Editar config.env manualmente"
     echo ""
     echo -e "${YELLOW}MÓDULOS INDIVIDUALES - BASE:${NC}"
+    echo "  9) Verificar dependencias"
     echo "  10) Preparar disco"
     echo "  11) Instalar sistema base"
     echo "  12) Configurar sistema"
@@ -432,6 +498,7 @@ show_menu() {
         3) interactive_config ;;
         4) ${EDITOR:-nano} "$CONFIG_FILE" && source "$CONFIG_FILE" ;;
         
+        9) run_module "00-check-dependencies" ;;
         10) run_module "01-prepare-disk" ;;
         11) run_module "02-debootstrap" ;;
         12) run_module "03-configure-base" ;;
@@ -472,6 +539,9 @@ full_automatic_install() {
     
     log_step "INSTALACIÓN AUTOMÁTICA COMPLETA"
     
+    # Verificar dependencias primero
+    run_module "00-check-dependencies" || exit 1
+    
     # Base
     run_module "01-prepare-disk" || exit 1
     run_module "02-debootstrap" || exit 1
@@ -508,6 +578,7 @@ full_interactive_install() {
     log_step "INSTALACIÓN INTERACTIVA"
     
     declare -A modules=(
+        ["00-check-dependencies"]="Verificar dependencias"
         ["01-prepare-disk"]="Preparar disco"
         ["02-debootstrap"]="Sistema base"
         ["03-configure-base"]="Configuración"
@@ -522,7 +593,7 @@ full_interactive_install() {
         ["24-security-hardening"]="Seguridad"
     )
     
-    for mod in "01-prepare-disk" "02-debootstrap" "03-configure-base" \
+    for mod in "00-check-dependencies" "01-prepare-disk" "02-debootstrap" "03-configure-base" \
                "04-install-bootloader" "10-install-gnome" "11-configure-network" \
                "12-install-multimedia" "13-install-fonts" "20-optimize-performance" \
                "21-optimize-laptop" "23-minimize-systemd" "24-security-hardening"; do
