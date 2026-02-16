@@ -24,8 +24,7 @@ apt install -y $APT_FLAGS \
 echo "Instalando utilidades GNOME..."
 apt install -y $APT_FLAGS \
     gnome-keyring \
-    gnome-screenshot \
-    gnome-system-monitor \
+    lxtask \
     gnome-disk-utility \
     gnome-tweaks \
     gnome-shell-extension-manager \
