@@ -37,8 +37,8 @@ interactive_config() {
     echo "  1) Ubuntu 24.04 LTS (Noble Numbat) - Recomendado ✅"
     echo "  2) Ubuntu 22.04 LTS (Jammy Jellyfish)"
     echo "  3) Ubuntu 20.04 LTS (Focal Fossa)"
-    echo "  4) Ubuntu 24.10 (Oracular Oriole)"
-    echo "  5) Ubuntu 25.04 (Plucky Puffin) - Desarrollo"
+    echo "  4) Ubuntu 25.10 (Questing Quokka)"
+    echo "  5) Ubuntu 26.04 (Resolute Raccoon) - Desarrollo"
     echo ""
     read -p "Selecciona versión (1-5) [1]: " ver_choice
     ver_choice=${ver_choice:-1}
@@ -47,8 +47,8 @@ interactive_config() {
         1) UBUNTU_VERSION="noble" ;;
         2) UBUNTU_VERSION="jammy" ;;
         3) UBUNTU_VERSION="focal" ;;
-        4) UBUNTU_VERSION="oracular" ;;
-        5) UBUNTU_VERSION="plucky" ;;
+        4) UBUNTU_VERSION="questing" ;;
+        5) UBUNTU_VERSION="resolute" ;;
         *) UBUNTU_VERSION="noble" ;;
     esac
     
