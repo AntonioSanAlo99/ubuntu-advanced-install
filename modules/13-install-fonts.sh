@@ -10,7 +10,6 @@ APT_FLAGS=""
 
 arch-chroot "$TARGET" /bin/bash << CHROOTEOF
 export DEBIAN_FRONTEND=noninteractive
-export LANG=es_ES.UTF-8; export LC_ALL=es_ES.UTF-8; export LANGUAGE=es_ES
 APT_FLAGS="$APT_FLAGS"
 
 # ============================================================================
