@@ -6,8 +6,6 @@ source "$(dirname "$0")/../config.env"
 echo "Minimizando componentes de systemd..."
 
 arch-chroot "$TARGET" /bin/bash << 'CHROOTEOF'
-# FIX: Perl locale warnings
-export LANG=es_ES.UTF-8; export LC_ALL=es_ES.UTF-8; export LANGUAGE=es_ES
 
 # Deshabilitar componentes systemd innecesarios
 echo "Deshabilitando servicios systemd innecesarios..."
