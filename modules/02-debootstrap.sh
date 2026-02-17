@@ -86,37 +86,6 @@ echo "  • restricted: Drivers propietarios (NVIDIA, etc)"
 echo "  • universe: Software mantenido por comunidad"
 echo "  • multiverse: Software con restricciones de copyright"
 
-# FIX: Perl locale warnings
-# debootstrap instala un sistema mínimo sin locales generados.
-# Perl los busca antes de que apt pueda instalar nada, produciendo:
-#   "perl: warning: Setting locale failed"
-#   "perl: warning: Please check that your locale settings are correct"
-# La solución correcta es fijar LC_ALL=C.UTF-8 en el sistema instalado
-# ANTES de entrar al chroot, no hacer apt upgrade.
-echo "Configurando locales mínimos (fix Perl)..."
-
-mkdir -p "$TARGET/etc/profile.d"
-
-cat > "$TARGET/etc/default/locale" << 'LOCEOF'
-LANG=C.UTF-8
-LC_ALL=C.UTF-8
-LANGUAGE=C
-LOCEOF
-
-cat > "$TARGET/etc/environment" << 'ENVEOF'
-LANG=C.UTF-8
-LC_ALL=C.UTF-8
-LANGUAGE=C
-ENVEOF
-
-cat > "$TARGET/etc/profile.d/00-locale-fix.sh" << 'PROFEOF'
-export LANG=C.UTF-8
-export LC_ALL=C.UTF-8
-export LANGUAGE=C
-PROFEOF
-
-echo "✓ Locales mínimos configurados (Perl no generará warnings)"
-
 # Generar fstab
 echo "Generando fstab..."
 genfstab -U "$TARGET" > "$TARGET/etc/fstab"
