@@ -10,8 +10,6 @@ APT_FLAGS=""
 
 arch-chroot "$TARGET" /bin/bash << 'CHROOTEOF'
 export DEBIAN_FRONTEND=noninteractive
-# FIX: Perl locale warnings
-export LANG=es_ES.UTF-8; export LC_ALL=es_ES.UTF-8; export LANGUAGE=es_ES
 APT_FLAGS="--no-install-recommends"
 
 # WiFi
