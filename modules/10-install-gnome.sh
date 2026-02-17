@@ -34,7 +34,7 @@ apt install -y \$APT_FLAGS \
 echo "Instalando utilidades GNOME..."
 apt install -y \$APT_FLAGS \
     gnome-keyring \
-    lxtsk \
+    lxtask \
     file-roller \
     gedit \
     evince \
