@@ -17,7 +17,6 @@ echo "✓ Hostname configurado: $HOSTNAME"
 
 # Verificar y actualizar repositorios
 arch-chroot "$TARGET" /bin/bash << 'CHROOT_EOF'
-export LANG=C.UTF-8; export LC_ALL=C.UTF-8; export LANGUAGE=C
 export DEBIAN_FRONTEND=noninteractive
 
 echo "Verificando repositorios..."
