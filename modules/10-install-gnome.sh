@@ -20,7 +20,8 @@ apt install -y \$APT_FLAGS \
     gnome-control-center \
     gnome-terminal \
     nautilus \
-    gdm3
+    gdm3 \
+    plymouth
 
 echo "Instalando utilidades GNOME..."
 apt install -y \$APT_FLAGS \
