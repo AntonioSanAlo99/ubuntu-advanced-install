@@ -178,17 +178,7 @@ cd /
 echo "Instalando thumbnailers..."
 
 # Thumbnailer para .exe (iconos de Windows)
-apt install -y \$APT_FLAGS python3-pip python3-pil || true
-pip3 install --break-system-packages icoextract 2>/dev/null || pip3 install icoextract
-
-# Crear thumbnailer para .exe
-mkdir -p /usr/share/thumbnailers
-cat > /usr/share/thumbnailers/exe-thumbnailer.thumbnailer << 'EXETHUMB'
-[Thumbnailer Entry]
-TryExec=icoextract
-Exec=sh -c 'icoextract "%i" "%o" -n 1 2>/dev/null || convert -size 256x256 xc:transparent "%o"'
-MimeType=application/x-ms-dos-executable;application/x-msdos-program;application/x-executable;
-EXETHUMB
+apt install -y \$APT_FLAGS icoextract-thumbnailer
 
 echo "✓ Thumbnailer .exe instalado"
 
