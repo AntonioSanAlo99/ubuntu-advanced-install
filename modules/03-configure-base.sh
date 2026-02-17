@@ -44,7 +44,7 @@ ln -sf /usr/share/zoneinfo/Europe/Madrid /etc/localtime
 
 # Instalar locales si no está
 if ! dpkg -l | grep -q "^ii.*locales"; then
-    apt install -y locales
+    apt install -y locales locales-all
 fi
 
 locale-gen es_ES.UTF-8
