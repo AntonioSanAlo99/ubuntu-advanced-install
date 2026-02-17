@@ -6,8 +6,6 @@ source "$(dirname "$0")/../config.env"
 echo "Aplicando hardening de seguridad..."
 
 arch-chroot "$TARGET" /bin/bash << 'CHROOTEOF'
-# FIX: Perl locale warnings
-export LANG=es_ES.UTF-8; export LC_ALL=es_ES.UTF-8; export LANGUAGE=es_ES
 
 # === HARDENING DEL KERNEL ===
 cat > /etc/sysctl.d/99-security-hardening.conf << 'SYSCTL_EOF'
