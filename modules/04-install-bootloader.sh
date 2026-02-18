@@ -30,9 +30,6 @@ fi
 
 arch-chroot "$TARGET" /bin/bash << CHROOTEOF
 export DEBIAN_FRONTEND=noninteractive
-export LANG=C.UTF-8
-export LC_ALL=C.UTF-8
-export LANGUAGE=C
 
 APT_FLAGS="$APT_FLAGS"
 GRUB_PKG="$GRUB_PKG"
