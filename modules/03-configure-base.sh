@@ -53,3 +53,12 @@ EOF
 [ -n "$ROOT_PASSWORD" ] && echo "root:$ROOT_PASSWORD" | arch-chroot "$TARGET" chpasswd
 
 echo "✓ Sistema base configurado"
+echo ""
+echo "Configuración aplicada:"
+echo "  • Hostname: $HOSTNAME"
+echo "  • Usuario: $USERNAME"
+echo "  • Locale: es_ES.UTF-8"
+echo "  • Timezone: Europe/Madrid"
+echo "  • Teclado: Español (es)"
+echo "  • Repositorios: main, restricted, universe, multiverse"
+echo ""
