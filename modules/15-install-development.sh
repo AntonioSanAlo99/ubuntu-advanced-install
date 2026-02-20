@@ -78,8 +78,8 @@ elif [ "\$NODEJS_OPTION" = "3" ]; then
     rm -f /etc/apt/sources.list.d/nodesource.list
     rm -f /usr/share/keyrings/nodesource.gpg
     
-    # Instalar NodeJS 20 LTS (Iron)
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    # Instalar NodeJS 24 LTS (Krypton)
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
     apt install -y nodejs
     
     echo "✓ NodeJS LTS instalado ($(node --version))"
