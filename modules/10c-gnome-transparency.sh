@@ -14,74 +14,6 @@ arch-chroot "$TARGET" /bin/bash << 'CHROOTEOF'
 set -e
 
 # ============================================================================
-# INSTALAR EXTENSIÓN USER THEMES
-# ============================================================================
-
-echo "Instalando extensión User Themes..."
-
-apt-get install -y gnome-shell-extension-user-theme
-
-echo "✓ User Themes instalado"
-
-# ============================================================================
-# CREAR TEMA SIMPLE EN ~/.themes
-# ============================================================================
-
-echo "Creando tema Adwaita-Transparent..."
-
-# Tema en /etc/skel (se copiará a ~/.themes del usuario)
-THEME_DIR="/etc/skel/.themes/Adwaita-Transparent/gnome-shell"
-mkdir -p "$THEME_DIR"
-
-# Tema vanilla Adwaita con solo transparencias en quick settings y calendario
-cat > "$THEME_DIR/gnome-shell.css" << 'CSS_EOF'
-/* Adwaita Transparent - Tema vanilla con transparencias mínimas */
-
-/* Importar tema base de Adwaita */
-@import url("resource:///org/gnome/shell/theme/gnome-shell.css");
-
-/* ============================================================================
-   QUICK SETTINGS - Transparencia 15%
-   ============================================================================ */
-.quick-settings {
-    background-color: rgba(0, 0, 0, 0.15) !important;
-}
-
-.quick-settings-grid {
-    background-color: transparent !important;
-}
-
-.quick-toggle {
-    background-color: rgba(255, 255, 255, 0.1) !important;
-}
-
-.quick-toggle:hover {
-    background-color: rgba(255, 255, 255, 0.15) !important;
-}
-
-/* ============================================================================
-   CALENDAR Y NOTIFICACIONES - Transparencia 15%
-   ============================================================================ */
-.calendar {
-    background-color: rgba(0, 0, 0, 0.15) !important;
-}
-
-.message-list {
-    background-color: rgba(0, 0, 0, 0.15) !important;
-}
-
-.message {
-    background-color: rgba(255, 255, 255, 0.05) !important;
-}
-
-.message:hover {
-    background-color: rgba(255, 255, 255, 0.1) !important;
-}
-CSS_EOF
-
-echo "✓ Tema creado en /etc/skel/.themes/Adwaita-Transparent/"
-
-# ============================================================================
 # SCRIPT DE ACTIVACIÓN EN PRIMER LOGIN
 # ============================================================================
 
@@ -152,15 +84,6 @@ if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] && [ "$XDG_CURRENT_DESKTOP" = "GNOME" ]; t
         fi
         
         # =====================================================================
-        # APLICAR TEMA PERSONALIZADO
-        # =====================================================================
-        
-        if [ -d "$HOME/.themes/Adwaita-Transparent/gnome-shell" ]; then
-            gsettings set org.gnome.shell.extensions.user-theme name 'Adwaita-Transparent' 2>/dev/null
-            echo "✓ Tema Adwaita-Transparent aplicado"
-        fi
-        
-        # =====================================================================
         # APPS ANCLADAS: SOLO CHROME Y NAUTILUS
         # =====================================================================
         
@@ -193,16 +116,11 @@ echo "════════════════════════�
 echo "✓ CONFIGURACIÓN COMPLETADA"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
-echo "Tema:"
-echo "  • Adwaita-Transparent (vanilla con transparencias mínimas)"
-echo "  • Ubicación: ~/.themes/Adwaita-Transparent/"
-echo "  • Elementos: Quick Settings, Calendar/Notificaciones"
-echo ""
 echo "Tipografías:"
-echo "  • Interfaz: Ubuntu Regular 11"
-echo "  • Documentos: Ubuntu Regular 11"
-echo "  • Títulos: Ubuntu Bold 11"
-echo "  • Monospace: JetBrainsMono Nerd Font 10"
+echo "  • Interfaz: Ubuntu Regular"
+echo "  • Documentos: Ubuntu Regular"
+echo "  • Títulos: Ubuntu Bold"
+echo "  • Monospace: JetBrainsMono Nerd Font"
 echo ""
 echo "Extensiones activadas:"
 echo "  • User Themes (para tema personalizado)"
