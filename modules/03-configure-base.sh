@@ -57,8 +57,8 @@ deb http://security.ubuntu.com/ubuntu/ $RELEASE-security main restricted univers
 SOURCES_EOF
 fi
 
-apt update -qq
-echo "✓ Índice de paquetes actualizado"
+apt update && apt upgrade -y
+echo "✓ Sistema actualizado"
 
 # Instalar paquete locales si debootstrap no lo incluyó
 if ! dpkg -l locales 2>/dev/null | grep -q "^ii"; then
