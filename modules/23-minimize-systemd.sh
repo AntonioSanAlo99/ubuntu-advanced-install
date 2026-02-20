@@ -123,12 +123,7 @@ Package: systemd-coredump
 Pin: release *
 Pin-Priority: -1
 
-Package: systemd-oomd
-Pin: release *
-Pin-Priority: -1
-PREFS_EOF
-
-echo "✓ Preferencias APT configuradas (5 paquetes bloqueados)"
+echo "✓ Preferencias APT configuradas (4 paquetes bloqueados)"
 
 # ============================================================================
 # OPTIMIZAR JOURNALD
