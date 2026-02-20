@@ -69,29 +69,6 @@ apt install -y \$APT_FLAGS \
 echo "✓ Extensiones instaladas"
 
 # ============================================================================
-# ELIMINAR SNAPD Y EXTENSIÓN DE SNAP
-# ============================================================================
-
-echo "Eliminando snapd y extensiones relacionadas..."
-
-# Desinstalar snapd completamente
-apt purge -y snapd gnome-software-plugin-snap 2>/dev/null || true
-apt autoremove -y
-
-# Bloquear reinstalación de snap
-cat > /etc/apt/preferences.d/99-no-snap << 'NOSNAP_EOF'
-Package: snapd
-Pin: release *
-Pin-Priority: -1
-
-Package: gnome-software-plugin-snap
-Pin: release *
-Pin-Priority: -1
-NOSNAP_EOF
-
-echo "✓ Snapd eliminado y bloqueado"
-
-# ============================================================================
 # SYSTEMD-OOMD (gestión automática de memoria baja)
 # ============================================================================
 
@@ -204,17 +181,7 @@ cd /
 echo "Instalando thumbnailers..."
 
 # Thumbnailer para .exe (iconos de Windows)
-apt install -y \$APT_FLAGS python3-pip python3-pil || true
-pip3 install --break-system-packages icoextract 2>/dev/null || pip3 install icoextract
-
-# Crear thumbnailer para .exe
-mkdir -p /usr/share/thumbnailers
-cat > /usr/share/thumbnailers/exe-thumbnailer.thumbnailer << 'EXETHUMB'
-[Thumbnailer Entry]
-TryExec=icoextract
-Exec=sh -c 'icoextract "%i" "%o" -n 1 2>/dev/null || convert -size 256x256 xc:transparent "%o"'
-MimeType=application/x-ms-dos-executable;application/x-msdos-program;application/x-executable;
-EXETHUMB
+apt install -y \$APT_FLAGS icoextract-thumbnailer || true
 
 echo "✓ Thumbnailer .exe instalado"
 
