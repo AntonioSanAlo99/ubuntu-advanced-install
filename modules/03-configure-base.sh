@@ -95,7 +95,7 @@ echo "✓ Paquetes de idioma español instalados"
 # ============================================================================
 
 # Crear drop-in para todas las getty
-mkdir -p /etc/systemd/system/getty@.service.d/
+#mkdir -p /etc/systemd/system/getty@.service.d/
 
 echo "✓ Paquetes de idioma español instalados"
 
@@ -119,50 +119,50 @@ arch-chroot "$TARGET" /bin/bash << 'KEYBOARD_EOF'
 export DEBIAN_FRONTEND=noninteractive
 
 # Instalar paquete keyboard-configuration si no está
-apt-get install -y keyboard-configuration console-setup
+#apt-get install -y keyboard-configuration console-setup
 
 # Configurar teclado español para consola (TTY)
-cat > /etc/default/keyboard << 'KBD_EOF'
+#cat > /etc/default/keyboard << 'KBD_EOF'
 # KEYBOARD CONFIGURATION FILE
 # Consult the keyboard(5) manual page.
 
-XKBMODEL="pc105"
-XKBLAYOUT="es"
-XKBVARIANT=""
-XKBOPTIONS=""
+#XKBMODEL="pc105"
+#XKBLAYOUT="es"
+#XKBVARIANT=""
+#XKBOPTIONS=""
 
-BACKSPACE="guess"
-KBD_EOF
+#BACKSPACE="guess"
+#KBD_EOF
 
 # Aplicar configuración de teclado
-setupcon -k --force || true
+#setupcon -k --force || true
 
 # Crear /etc/vconsole.conf (método Arch/systemd para consola virtual)
-cat > /etc/vconsole.conf << 'VCONSOLE_EOF'
-KEYMAP=es
-FONT=eurlatgr
-VCONSOLE_EOF
+#cat > /etc/vconsole.conf << 'VCONSOLE_EOF'
+#KEYMAP=es
+#FONT=eurlatgr
+#VCONSOLE_EOF
 
 # Configurar también para X11/Wayland
-mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/00-keyboard.conf << 'X11_EOF'
-Section "InputClass"
-    Identifier "system-keyboard"
-    MatchIsKeyboard "on"
-    Option "XkbLayout" "es"
-    Option "XkbModel" "pc105"
-EndSection
-X11_EOF
+#mkdir -p /etc/X11/xorg.conf.d
+#cat > /etc/X11/xorg.conf.d/00-keyboard.conf << 'X11_EOF'
+#Section "InputClass"
+#    Identifier "system-keyboard"
+#    MatchIsKeyboard "on"
+#    Option "XkbLayout" "es"
+#    Option "XkbModel" "pc105"
+#EndSection
+#X11_EOF
 
 # Asegurar que localectl también lo refleja (systemd)
-localectl set-keymap es || true
-localectl set-x11-keymap es pc105 || true
+#localectl set-keymap es || true
+#localectl set-x11-keymap es pc105 || true
 
-echo "✓ Teclado configurado: Español (consola + X11 + Wayland)"
+#echo "✓ Teclado configurado: Español (consola + X11 + Wayland)"
 
-KEYBOARD_EOF
+#KEYBOARD_EOF
 
-echo "✓ Distribución de teclado: es (España)"
+#echo "✓ Distribución de teclado: es (España)"
 
 # Crear usuario con contraseña
 echo "Creando usuario $USERNAME..."
