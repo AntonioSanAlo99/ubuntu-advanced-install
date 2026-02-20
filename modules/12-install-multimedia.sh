@@ -55,8 +55,7 @@ apt-get install -y \$APT_FLAGS \
 # Hasta entonces, Totem es la única forma de tener miniaturas de audio
 echo "Instalando Totem (requerido para thumbnailers de audio)..."
 apt-get install -y \$APT_FLAGS \
-    totem \
-    totem-plugins
+    totem
 
 # Thumbnailers adicionales para formatos específicos
 apt-get install -y \$APT_FLAGS \
@@ -75,12 +74,12 @@ mkdir -p /etc/skel/.cache/thumbnails/fail
 
 # Limpiar Totem de aplicaciones si solo se quiere para thumbnailers
 # (comentado por defecto, descomentar si prefieres ocultar Totem del menú)
-# cat > /usr/share/applications/org.gnome.Totem.desktop << 'TOTEM_EOF'
-# [Desktop Entry]
-# Type=Application
-# Name=Totem (solo thumbnailers)
-# NoDisplay=true
-# TOTEM_EOF
+cat > /usr/share/applications/org.gnome.Totem.desktop << 'TOTEM_EOF'
+[Desktop Entry]
+Type=Application
+Name=Totem (solo thumbnailers)
+NoDisplay=true
+TOTEM_EOF
 
 # ============================================================================
 # REPRODUCTORES MULTIMEDIA
