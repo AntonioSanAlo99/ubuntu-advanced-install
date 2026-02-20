@@ -67,68 +67,6 @@ DISABLE_ANIMATIONS="$DISABLE_ANIMATIONS"
 DISABLE_EDS="$DISABLE_EDS"
 
 # ============================================================================
-# DESHABILITAR TRACKER
-# ============================================================================
-
-if [[ \$DISABLE_TRACKER =~ ^[SsYy]$ ]]; then
-    echo "Deshabilitando Tracker..."
-    
-    mkdir -p /etc/xdg/autostart
-    
-    cat > /etc/xdg/autostart/tracker-miner-fs-3.desktop << 'TRACKER_EOF'
-[Desktop Entry]
-Type=Application
-Name=Tracker File System Miner
-Hidden=true
-X-GNOME-Autostart-enabled=false
-TRACKER_EOF
-    
-    cat > /etc/xdg/autostart/tracker-extract-3.desktop << 'TRACKER_EOF'
-[Desktop Entry]
-Type=Application
-Name=Tracker Metadata Extractor
-Hidden=true
-X-GNOME-Autostart-enabled=false
-TRACKER_EOF
-    
-    echo "✓ Tracker deshabilitado (ahorra ~100-200MB RAM)"
-else
-    echo "○ Tracker habilitado (indexación activa)"
-fi
-
-# ============================================================================
-# DESHABILITAR EVOLUTION DATA SERVER
-# ============================================================================
-
-if [[ \$DISABLE_EDS =~ ^[SsYy]$ ]]; then
-    echo "Deshabilitando Evolution Data Server..."
-    
-    if dpkg -l | grep -q evolution-data-server; then
-        cat > /etc/xdg/autostart/evolution-data-server.desktop << 'EDS_EOF'
-[Desktop Entry]
-Type=Application
-Name=Evolution Data Server
-Hidden=true
-X-GNOME-Autostart-enabled=false
-EDS_EOF
-        
-        echo "✓ Evolution Data Server deshabilitado (ahorra ~50-100MB RAM)"
-    else
-        echo "○ Evolution Data Server no instalado"
-    fi
-else
-    echo "○ Evolution Data Server habilitado"
-fi
-
-# ============================================================================
-# DESHABILITAR GNOME SOFTWARE
-# ============================================================================
-
-echo "Deshabilitando gnome-software (siempre)..."
-systemctl mask gnome-software.service 2>/dev/null || true
-echo "✓ gnome-software deshabilitado (ahorra ~80-150MB RAM)"
-
-# ============================================================================
 # CONFIGURACIÓN DE USUARIO (primer login)
 # ============================================================================
 
