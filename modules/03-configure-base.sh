@@ -66,35 +66,42 @@ KEYBOARD_EOF
 dpkg-reconfigure -f noninteractive keyboard-configuration
 echo "✓ Teclado configurado: Español"
 
-# 6. SEXTO: Crear usuario ANTES de asignar contraseña
+# Crear usuario con contraseña
 echo "Creando usuario $USERNAME..."
-useradd -m -G sudo,adm,audio,video,plugdev -s /bin/bash $USERNAME
-echo "✓ Usuario $USERNAME creado"
-CHROOT_EOF
 
-# Configurar contraseñas (AHORA el usuario existe)
 if [ -n "$USER_PASSWORD" ] && [ -n "$ROOT_PASSWORD" ]; then
+    # Contraseñas desde config.env
     echo "Usando contraseñas de config.env..."
     
-    # Asignar contraseña de usuario
-    echo "$USERNAME:$USER_PASSWORD" | arch-chroot "$TARGET" chpasswd
-    echo "✓ Contraseña de $USERNAME configurada"
-    
-    # Asignar contraseña de root
-    echo "root:$ROOT_PASSWORD" | arch-chroot "$TARGET" chpasswd
-    echo "✓ Contraseña de root configurada"
+    arch-chroot "$TARGET" /bin/bash << USEREOF
+useradd -m -G sudo,adm,audio,video,plugdev -s /bin/bash $USERNAME
+
+# Establecer contraseñas automáticamente
+echo "$USERNAME:$USER_PASSWORD" | chpasswd
+echo "root:$ROOT_PASSWORD" | chpasswd
+
+echo "✓ Usuario $USERNAME creado con contraseña configurada"
+echo "✓ Contraseña de root configurada"
+USEREOF
 
     echo ""
     echo -e "\033[0;33m⚠ SEGURIDAD: Elimina config.env después de la instalación\033[0m"
     echo -e "\033[0;33m  rm $(dirname "$0")/../config.env\033[0m"
+    
 else
+    # Pedir contraseñas interactivamente
     arch-chroot "$TARGET" /bin/bash << USEREOF
+useradd -m -G sudo,adm,audio,video,plugdev -s /bin/bash $USERNAME
+
 echo ""
 echo "Establecer contraseña para $USERNAME:"
 passwd $USERNAME
+
 echo ""
 echo "Establecer contraseña para root:"
 passwd root
+
+echo "✓ Usuario $USERNAME creado"
 USEREOF
 fi
 
