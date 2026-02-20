@@ -25,24 +25,24 @@ export DEBIAN_FRONTEND=noninteractive
 echo "Configurando locales..."
 
 # 1. Editar /etc/locale.gen (activar es_ES.UTF-8)
-sed -i 's/^# *es_ES.UTF-8/es_ES.UTF-8/' /etc/locale.gen
-grep -q "^es_ES.UTF-8" /etc/locale.gen || echo "es_ES.UTF-8 UTF-8" >> /etc/locale.gen
+#sed -i 's/^# *es_ES.UTF-8/es_ES.UTF-8/' /etc/locale.gen
+#grep -q "^es_ES.UTF-8" /etc/locale.gen || echo "es_ES.UTF-8 UTF-8" >> /etc/locale.gen
 
 # 2. Generar locales
-locale-gen
+#locale-gen
 
 # 3. Crear /etc/locale.conf (método systemd estándar)
-cat > /etc/locale.conf << 'LOCALE_CONF'
-LANG=es_ES.UTF-8
-LOCALE_CONF
+#cat > /etc/locale.conf << 'LOCALE_CONF'
+#LANG=es_ES.UTF-8
+#LOCALE_CONF
 
 # 4. Aplicar con localectl (systemd)
-localectl set-locale LANG=es_ES.UTF-8
+#localectl set-locale LANG=es_ES.UTF-8
 
-echo "✓ Locale configurado: es_ES.UTF-8"
+#echo "✓ Locale configurado: es_ES.UTF-8"
 
 # ============================================================================
-# AHORA SÍ: apt update y repositorios
+# ACTUALIZANDO SISTEMA
 # ============================================================================
 echo "Verificando repositorios..."
 
