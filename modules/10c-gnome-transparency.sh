@@ -105,16 +105,16 @@ if [ -n "$DBUS_SESSION_BUS_ADDRESS" ] && [ "$XDG_CURRENT_DESKTOP" = "GNOME" ]; t
         # =====================================================================
         
         # Interfaz: Ubuntu Regular 11
-        gsettings set org.gnome.desktop.interface font-name 'Ubuntu 11' 2>/dev/null
+        gsettings set org.gnome.desktop.interface font-name 'Ubuntu Regular' 2>/dev/null
         
         # Documentos: Ubuntu Regular 11
-        gsettings set org.gnome.desktop.interface document-font-name 'Ubuntu 11' 2>/dev/null
+        gsettings set org.gnome.desktop.interface document-font-name 'Ubuntu Regular' 2>/dev/null
         
         # Títulos de ventanas: Ubuntu Bold 11
-        gsettings set org.gnome.desktop.wm.preferences titlebar-font 'Ubuntu Bold 11' 2>/dev/null
+        gsettings set org.gnome.desktop.wm.preferences titlebar-font 'Ubuntu Bold' 2>/dev/null
         
         # Monospace: JetBrainsMono Nerd Font Regular 10
-        gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrainsMono Nerd Font 10' 2>/dev/null
+        gsettings set org.gnome.desktop.interface monospace-font-name 'JetBrainsMono Nerd Font Regular' 2>/dev/null
         
         echo "✓ Tipografías configuradas: Ubuntu + JetBrainsMono Nerd Font"
         
