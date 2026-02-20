@@ -187,15 +187,15 @@ echo "✓ Thumbnailer .exe instalado"
 
 # Thumbnailer para .appimage (desde kem-a)
 cd /tmp
-if wget -q https://github.com/kem-a/appimage-thumbnailer/releases/latest/download/appimage-thumbnailer.deb; then
-    if dpkg -i appimage-thumbnailer.deb 2>/dev/null; then
+if wget -q https://github.com/kem-a/appimage-thumbnailer/releases/latest/download/appimage-thumbnailer_v4.0.0_amd64.deb; then
+    if dpkg -i appimage-thumbnailer_v4.0.0_amd64.deb 2>/dev/null; then
         echo "✓ Thumbnailer .appimage instalado"
     else
         apt-get install -f -y
         dpkg -i appimage-thumbnailer.deb
         echo "✓ Thumbnailer .appimage instalado"
     fi
-    rm appimage-thumbnailer.deb
+    rm appimage-thumbnailer_v4.0.0_amd64.deb
 else
     echo "⚠ No se pudo descargar thumbnailer de appimage"
     echo "  Puedes instalarlo manualmente desde:"
