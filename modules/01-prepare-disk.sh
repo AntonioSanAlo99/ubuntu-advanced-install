@@ -1,8 +1,6 @@
 #!/bin/bash
 # Módulo 01: Preparar disco (detección automática + dual-boot)
 
-set -eo pipefail  # Detectar errores en pipelines
-
 source "$(dirname "$0")/../config.env"
 
 echo "═══════════════════════════════════════════════════════════"
