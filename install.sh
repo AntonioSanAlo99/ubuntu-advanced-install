@@ -851,17 +851,6 @@ full_interactive_install() {
         echo "  ✓ GPU Intel detectada"
     fi
     
-    # Disco
-    echo ""
-    echo -e "${CYAN}Verificando espacio en disco...${NC}"
-    DISK_FREE=$(df -BG / | awk 'NR==2 {print $4}' | sed 's/G//')
-    echo "  ✓ Espacio libre: ${DISK_FREE}GB"
-    
-    if [ "$DISK_FREE" -lt 50 ]; then
-        echo -e "  ${RED}✗ Espacio insuficiente (mínimo 50GB)${NC}"
-        ((HW_ERRORS++))
-    fi
-    
     # Laptop detection
     echo ""
     echo -e "${CYAN}Detectando tipo de sistema...${NC}"
