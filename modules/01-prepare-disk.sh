@@ -4,10 +4,6 @@
 set -eo pipefail  # Detectar errores en pipelines
 
 source "$(dirname "$0")/../config.env"
-# Constantes
-DEFAULT_UBUNTU_SIZE_GB=100
-MIN_UBUNTU_SIZE_GB=50
-MAX_UBUNTU_SIZE_GB=500
 
 echo "═══════════════════════════════════════════════════════════"
 echo "  PREPARACIÓN DE DISCO - DETECCIÓN AUTOMÁTICA"
