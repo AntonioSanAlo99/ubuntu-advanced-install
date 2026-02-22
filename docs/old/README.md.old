@@ -1,0 +1,276 @@
+# Ubuntu Advanced Install
+
+**Instalador modular de Ubuntu desde cero usando debootstrap**
+
+Sistema de instalación avanzado que construye Ubuntu Noble (24.04 LTS) desde los paquetes base, permitiendo control total sobre cada componente instalado.
+
+---
+
+## 🎯 Características Principales
+
+### Sistema Base Limpio
+- **Instalación mínima** usando `debootstrap`
+- **Control total** sobre paquetes instalados
+- **Sin bloatware** - solo lo que necesitas
+- **Optimizado** desde el primer arranque
+
+### Modularidad Completa
+- **26 módulos independientes** organizados por función
+- **Instalación selectiva** de componentes
+- **Modo interactivo** o completamente automatizado
+- **Configuración flexible** via `config.env`
+
+### GNOME Optimizado
+- **Instalación modular** de GNOME (core, optimizaciones, temas)
+- **Configuración automática** de extensiones y ajustes
+- **Optimización de memoria** opcional (deshabilita servicios pesados)
+- **Tema transparente** totalmente opcional (OFF por defecto - Adwaita recomendado)
+- **App Grid organizado** con carpetas automáticas
+
+### Componentes Opcionales
+- **Entorno de desarrollo** (Git, Python, Node.js, Rust, VS Code)
+- **Multimedia** (códecs, thumbnailers, herramientas)
+- **Gaming** (Steam, Lutris, optimizaciones)
+- **Fuentes** (JetBrains Mono Nerd Font, tipografías)
+- **WiFi/Bluetooth** con detección automática de hardware
+
+### Optimizaciones del Sistema
+- **TLP** para laptops (gestión de energía)
+- **Minimización de systemd** (deshabilita servicios innecesarios)
+- **Security hardening** (AppArmor, fail2ban, firewall)
+- **systemd-oomd** para protección contra OOM
+
+---
+
+## 🚀 Inicio Rápido
+
+### Requisitos Previos
+
+- **Ubuntu Live USB** (cualquier versión reciente)
+- **Conexión a internet** activa
+- **Disco disponible** para instalación
+- **Conocimientos básicos** de Linux (para instalación manual)
+
+### Instalación Básica
+
+```bash
+# 1. Descargar el instalador
+wget https://github.com/tu-usuario/ubuntu-advanced-install/archive/main.tar.gz
+tar xzf main.tar.gz
+cd ubuntu-advanced-install
+
+# 2. Ejecutar instalación interactiva
+sudo ./install.sh
+
+# Opción 1: Instalación guiada
+# → Responde preguntas paso a paso
+# → Configuración automática
+
+# 3. Al finalizar
+sudo reboot
+```
+
+### Instalación Automatizada
+
+```bash
+# 1. Configurar manualmente
+cp config.env.example config.env
+nano config.env
+
+# 2. Ejecutar instalación automática
+sudo ./install.sh --auto
+
+# 3. Reiniciar
+sudo reboot
+```
+
+---
+
+## 📋 Módulos Disponibles
+
+### Base (Obligatorios)
+- **01** - Preparar disco (particionado, formateo, montaje)
+- **02** - Debootstrap (sistema base Ubuntu)
+- **03** - Configuración base (locales, teclado, timezone)
+- **04** - Bootloader (GRUB)
+- **05** - Red (NetworkManager)
+
+### Componentes Opcionales
+- **10** - GNOME (entorno de escritorio completo)
+  - 10-core: Paquetes base + GDM
+  - 10-optimize: Optimización de memoria
+  - 10-theme: Tema transparente (opcional - OFF por defecto)
+  - 10-user-config: Configuración automática
+- **12** - Multimedia (códecs, thumbnailers)
+- **13** - Fuentes (JetBrains Mono NF, Ubuntu)
+- **14** - WiFi/Bluetooth
+- **15** - Desarrollo (Git, Python, Node.js, Rust, VS Code)
+- **16** - Gaming (Steam, Faugus, Heroic, ProtonUp-Qt)
+
+### Optimizaciones
+- **21** - Laptop (TLP, powertop)
+- **23** - Minimizar systemd
+- **24** - Security hardening
+
+### Utilidades
+- **30** - Verificar sistema
+- **31** - Generar reporte
+- **32** - Backup de configuración
+
+---
+
+## 🎨 Filosofía de Diseño
+
+### Inspiración
+
+Este proyecto está inspirado en:
+
+- **Arch Linux Installation** - Control total sobre el sistema
+- **Gentoo Stage3** - Construcción desde base mínima
+- **LFS (Linux From Scratch)** - Comprensión profunda del sistema
+- **Alpine Linux** - Minimalismo y eficiencia
+- **Clear Linux** - Optimizaciones de rendimiento
+
+### Principios
+
+1. **Modularidad** - Cada componente es independiente
+2. **Transparencia** - Código claro y documentado
+3. **Eficiencia** - Sin paquetes innecesarios
+4. **Flexibilidad** - Personalización total
+5. **Educación** - Aprender cómo funciona el sistema
+
+### Diferencias con Instalador Estándar Ubuntu
+
+| Característica | Ubuntu Estándar | Ubuntu Advanced Install |
+|----------------|-----------------|-------------------------|
+| Método | Ubiquity/Subiquity | debootstrap + módulos |
+| Paquetes | ~2000 paquetes base | ~800 paquetes base |
+| Control | Limitado | Total |
+| Snap | Pre-instalado | Opcional |
+| Bloatware | Incluido | Ninguno |
+| Personalización | Básica | Completa |
+| Curva aprendizaje | Baja | Media-Alta |
+
+---
+
+## 📚 Documentación
+
+La documentación completa está organizada en el directorio [`wiki/`](wiki/):
+
+### Guías Esenciales
+- **[Instalación](wiki/01-Installation-Guide.md)** - Guía paso a paso
+- **[Configuración](wiki/02-Configuration.md)** - Opciones y personalización
+- **[Troubleshooting](wiki/03-Troubleshooting.md)** - Solución de problemas
+
+### Componentes
+- **[GNOME](wiki/GNOME.md)** - Entorno de escritorio completo
+- **[Desarrollo](wiki/Development.md)** - Herramientas y lenguajes
+- **[Multimedia](wiki/Multimedia.md)** - Códecs y aplicaciones
+- **[Gaming](wiki/Gaming.md)** - Steam, Lutris y optimizaciones
+
+### Referencia Técnica
+- **[Módulos](wiki/Modules.md)** - Descripción detallada de cada módulo
+- **[Chroot](wiki/Chroot.md)** - Limitaciones y soluciones
+- **[Locales](wiki/Locales.md)** - Configuración de idioma
+- **[Optimizaciones](wiki/Optimizations.md)** - Ajustes de rendimiento
+
+---
+
+## 🔧 Casos de Uso
+
+### Usuario Desktop Minimalista
+```bash
+INSTALL_GNOME="true"
+GNOME_OPTIMIZE_MEMORY="true"
+INSTALL_MULTIMEDIA="false"
+INSTALL_DEVELOPMENT="false"
+USE_NO_INSTALL_RECOMMENDS="true"
+```
+
+### Desarrollador Full Stack
+```bash
+INSTALL_GNOME="true"
+INSTALL_DEVELOPMENT="true"
+INSTALL_RUST="true"
+INSTALL_VSCODE="true"
+NODEJS_OPTION="3"
+```
+
+### Gaming Station
+```bash
+INSTALL_GNOME="true"
+INSTALL_GAMING="true"
+INSTALL_MULTIMEDIA="true"
+```
+
+### Laptop con Máxima Eficiencia
+```bash
+INSTALL_GNOME="true"
+GNOME_OPTIMIZE_MEMORY="true"
+IS_LAPTOP="true"
+MINIMIZE_SYSTEMD="true"
+USE_NO_INSTALL_RECOMMENDS="true"
+```
+
+---
+
+## 🤝 Contribuir
+
+Las contribuciones son bienvenidas. Por favor:
+
+1. Fork el proyecto
+2. Crea una rama para tu feature (`git checkout -b feature/AmazingFeature`)
+3. Commit tus cambios (`git commit -m 'Add some AmazingFeature'`)
+4. Push a la rama (`git push origin feature/AmazingFeature`)
+5. Abre un Pull Request
+
+### Áreas donde Contribuir
+
+- Nuevos módulos (KDE, XFCE, etc.)
+- Optimizaciones adicionales
+- Soporte para otras distribuciones Debian
+- Mejoras en la documentación
+- Traducción a otros idiomas
+- Testing y reporte de bugs
+
+---
+
+## 📝 Licencia
+
+Este proyecto es software libre bajo licencia MIT. Ver [LICENSE](LICENSE) para más detalles.
+
+---
+
+## ⚠️ Disclaimer
+
+**Este instalador está diseñado para usuarios con conocimientos intermedios-avanzados de Linux.**
+
+- Realiza cambios significativos en el sistema
+- Puede borrar datos si se configura incorrectamente
+- Lee la documentación antes de usar
+- Haz backup de tus datos importantes
+- Prueba primero en una VM
+
+**No nos hacemos responsables de pérdida de datos o configuraciones incorrectas.**
+
+---
+
+## 🙏 Agradecimientos
+
+- **Ubuntu Team** - Por crear una distribución excelente
+- **Debian Project** - Por debootstrap y el sistema de paquetes
+- **Arch Wiki** - Por la documentación más completa de Linux
+- **Clear Linux** - Por las optimizaciones de Intel
+- **Comunidad Open Source** - Por compartir conocimiento
+
+---
+
+## 📞 Soporte
+
+- **Issues**: [GitHub Issues](https://github.com/tu-usuario/ubuntu-advanced-install/issues)
+- **Discusiones**: [GitHub Discussions](https://github.com/tu-usuario/ubuntu-advanced-install/discussions)
+- **Wiki**: [Documentación completa](wiki/)
+
+---
+
+**Construido con ❤️ por la comunidad Open Source**
