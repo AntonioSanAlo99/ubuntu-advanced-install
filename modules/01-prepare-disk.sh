@@ -35,7 +35,7 @@ echo "✓ Comandos verificados"
 echo ""
 
 # Detect firmware
-echo "[DEBUG] Detectando firmware..."
+echo " Detectando firmware..."
 if [ -d /sys/firmware/efi ]; then
     FIRMWARE="UEFI"
 else
@@ -47,7 +47,7 @@ echo ""
 
 # Detect disks
 echo "Detectando discos y sistemas operativos..."
-echo "[DEBUG] Ejecutando lsblk..."
+echo " Ejecutando lsblk..."
 
 # Método más robusto para detectar discos
 DISKS=()
@@ -56,16 +56,16 @@ while IFS= read -r line; do
     disk_type=$(echo "$line" | awk '{print $2}')
     if [ "$disk_type" = "disk" ]; then
         DISKS+=("$disk_name")
-        debug "Disco encontrado: $disk_name"
+        echo "Disco encontrado: $disk_name"
     fi
 done < <(lsblk -d -n -p -o NAME,TYPE 2>/dev/null)
 
-echo "[DEBUG] Total discos encontrados: ${#DISKS[@]}"
+echo " Total discos encontrados: ${#DISKS[@]}"
 
 if [ ${#DISKS[@]} -eq 0 ]; then
     echo "✗ No se detectaron discos"
-    echo "[DEBUG] Intentando listar todos los dispositivos de bloque:"
-    lsblk -a 2>/dev/null || debug "lsblk -a falló"
+    echo " Intentando listar todos los dispositivos de bloque:"
+    lsblk -a 2>/dev/null || echo "lsblk -a falló"
     exit 1
 fi
 
@@ -78,7 +78,7 @@ for disk in "${DISKS[@]}"; do
     DISK_HAS_EFI[$disk]="no"
     
     # Check for Windows partitions
-    echo "[DEBUG] Verificando particiones en $disk..."
+    echo " Verificando particiones en $disk..."
     
     # Obtener lista de particiones de forma robusta
     PARTITIONS=$(lsblk -n -p -o NAME "$disk" 2>/dev/null | grep -v "^$disk$" || true)
@@ -86,7 +86,7 @@ for disk in "${DISKS[@]}"; do
     while IFS= read -r part; do
         [ -z "$part" ] && continue  # Saltar líneas vacías
         
-        debug "Analizando partición: $part"
+        echo "Analizando partición: $part"
         
         fstype=$(lsblk -n -o FSTYPE "$part" 2>/dev/null || true)
         label=$(lsblk -n -o LABEL "$part" 2>/dev/null || true)
@@ -96,13 +96,13 @@ for disk in "${DISKS[@]}"; do
             # Check if it's a Windows system partition
             if [[ "$label" =~ ^(Windows|System|OS|WINRE).*$ ]]; then
                 DISK_HAS_WINDOWS[$disk]="yes"
-                debug "Windows detectado en $part (label: $label)"
+                echo "Windows detectado en $part (label: $label)"
             fi
             
             # Check blkid for windows
             if blkid "$part" 2>/dev/null | grep -qi windows; then
                 DISK_HAS_WINDOWS[$disk]="yes"
-                debug "Windows detectado en $part (blkid)"
+                echo "Windows detectado en $part (blkid)"
             fi
             
             # Check common Windows directories if we can mount
@@ -110,7 +110,7 @@ for disk in "${DISKS[@]}"; do
                 if mount -r "$part" /tmp/check_win 2>/dev/null; then
                     if [ -d /tmp/check_win/Windows ] || [ -d /tmp/check_win/windows ]; then
                         DISK_HAS_WINDOWS[$disk]="yes"
-                        debug "Windows detectado en $part (directorio /Windows)"
+                        echo "Windows detectado en $part (directorio /Windows)"
                     fi
                     umount /tmp/check_win 2>/dev/null
                 fi
@@ -121,14 +121,14 @@ for disk in "${DISKS[@]}"; do
         # Detect EFI partition
         if [[ "$fstype" == "vfat" ]] && [[ "$label" =~ ^(EFI|SYSTEM).*$ ]]; then
             DISK_HAS_EFI[$disk]="yes"
-            debug "EFI detectado en $part (label: $label)"
+            echo "EFI detectado en $part (label: $label)"
         fi
         
         # Check partition type for EFI (GPT)
         parttype=$(blkid -s PART_ENTRY_TYPE -o value "$part" 2>/dev/null || true)
         if [[ "$parttype" == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" ]]; then
             DISK_HAS_EFI[$disk]="yes"
-            debug "EFI detectado en $part (GPT UUID)"
+            echo "EFI detectado en $part (GPT UUID)"
         fi
     done <<< "$PARTITIONS"
 done
