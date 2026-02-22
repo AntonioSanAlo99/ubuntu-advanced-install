@@ -415,5 +415,3 @@ echo ""
 echo "✓✓✓ Particionamiento completado ✓✓✓"
 echo ""
 lsblk -o NAME,SIZE,FSTYPE,LABEL,MOUNTPOINT "$TARGET_DISK"
-
-exit 0
