@@ -248,34 +248,6 @@ else
 fi
 
 # ============================================================================
-# PROTONPLUS (gestor gráfico de versiones de Proton via Pacstall)
-# ============================================================================
-# ProtonPlus se instala via pacstall para obtener siempre la última versión
-# y gestionar sus dependencias correctamente.
-# ============================================================================
-
-echo ""
-echo "Instalando ProtonPlus via Pacstall..."
-
-# Instalar Pacstall si no está presente
-if ! command -v pacstall &>/dev/null; then
-    echo "  Instalando Pacstall..."
-    if bash -c "$(wget -q https://pacstall.dev/q/install -O -)"; then
-        echo "  ✓ Pacstall instalado"
-    else
-        echo "  ⚠ No se pudo instalar Pacstall — ProtonPlus omitido"
-    fi
-fi
-
-if command -v pacstall &>/dev/null; then
-    if pacstall -I protonplus; then
-        echo "  ✓ ProtonPlus instalado via Pacstall"
-    else
-        echo "  ⚠ Error instalando ProtonPlus — omitido"
-    fi
-fi
-
-# ============================================================================
 # ESTRUCTURA COMPARTIDA DE PROTON
 # ============================================================================
 
