@@ -1,0 +1,127 @@
+══════════════════════════════════════════════════════════════════════════════
+  SUGERENCIAS DE MEJORA — TEMA ADWAITA-TRANSPARENT
+  Para aplicar DESPUÉS de testear que el tema actual funciona correctamente.
+  Archivo generado durante revisión de código — ubuntu-advanced-install
+══════════════════════════════════════════════════════════════════════════════
+
+Las siguientes sugerencias están ordenadas por prioridad. No es necesario
+aplicarlas todas — evalúa cada una tras ver el resultado visual en pantalla.
+
+
+──────────────────────────────────────────────────────────────────────────────
+1. [MEDIA] Reducir scope de .popup-menu-content
+──────────────────────────────────────────────────────────────────────────────
+
+El selector actual afecta a TODOS los popovers del sistema, incluyendo menús
+de extensiones que podrían querer estilos propios. El !important puede romper
+esos casos silenciosamente.
+
+ACTUAL:
+    .popup-menu-content {
+        background: rgba(36, 36, 36, 0.88) !important;
+        ...
+    }
+
+SUGERIDO: Añadir contexto para limitarlo a los popovers del panel:
+    #panel .popup-menu-content,
+    .quick-settings .popup-menu-content {
+        background: rgba(36, 36, 36, 0.88);
+        ...
+    }
+
+Nota: quitar !important aquí es seguro si el selector es suficientemente
+específico (2 clases + ID > especificidad de Adwaita base).
+
+
+──────────────────────────────────────────────────────────────────────────────
+2. [BAJA] Homogeneizar !important en bloque Quick Settings
+──────────────────────────────────────────────────────────────────────────────
+
+.quick-settings-box y .quick-settings no tienen !important, pero
+.quick-toggle-menu sí lo tenía en la versión anterior (ahora eliminado).
+Si tras testear ves que los Quick Settings no aplican el fondo correctamente,
+añade !important solo a los dos primeros:
+
+    .quick-settings-box,
+    .quick-settings {
+        background-color: rgba(36, 36, 36, 0.88) !important;  /* añadir */
+        ...
+    }
+
+
+──────────────────────────────────────────────────────────────────────────────
+3. [BAJA] Opacidad del dock con wallpapers claros
+──────────────────────────────────────────────────────────────────────────────
+
+El dock usa rgba(37, 37, 37, 0.4) — notablemente más transparente que el
+resto del sistema (0.88). Es una decisión de diseño intencional, pero con
+wallpapers claros o muy coloridos el dock puede quedar prácticamente invisible.
+
+Si quieres más contraste:
+    .dash-background {
+        background-color: rgba(37, 37, 37, 0.65);  /* subir de 0.4 a 0.65 */
+        border-radius: 18px;
+    }
+
+O si prefieres que coincida con el resto del sistema:
+    .dash-background {
+        background-color: rgba(36, 36, 36, 0.88);
+        border-radius: 18px;
+    }
+
+
+──────────────────────────────────────────────────────────────────────────────
+4. [BAJA] Estados :focus en botones del calendario
+──────────────────────────────────────────────────────────────────────────────
+
+Los botones .events-button, .world-clocks-button, .weather-button tienen
+:hover pero el :focus ya está añadido en la versión actual del CSS.
+Si en el testeo ves que el anillo de foco no se ve bien (demasiado brillante
+o no visible), ajusta estos valores:
+
+    .events-button:focus,
+    .world-clocks-button:focus,
+    .weather-button:focus {
+        background-color: rgba(255, 255, 255, 0.10);
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);  /* ajustar opacidad */
+    }
+
+
+──────────────────────────────────────────────────────────────────────────────
+5. [INFORMATIVO] Pseudo-clases :second-in-stack y :lower-in-stack
+──────────────────────────────────────────────────────────────────────────────
+
+Estas pseudo-clases son internas del motor CSS de GNOME Shell (St), no
+son CSS estándar. Funcionan en GNOME 46-48, pero Canonical o la comunidad
+GNOME pueden renombrarlas en versiones futuras.
+
+Si tras una actualización de GNOME las notificaciones apiladas pierden el
+efecto de profundidad (degradado de opacidad), revisar si los nombres
+cambiaron en la nueva versión de gnome-shell.
+
+No hay acción inmediata necesaria — solo tenerlo en cuenta al actualizar
+Ubuntu de versión mayor (25.04, 26.04, etc.).
+
+
+──────────────────────────────────────────────────────────────────────────────
+6. [FUTURA] Soporte para modo claro del sistema
+──────────────────────────────────────────────────────────────────────────────
+
+Todo el tema asume fondo oscuro (dark mode). Si en el futuro quieres
+soportar modo claro, los colores base deberían cambiar a superficie clara:
+
+    /* Para modo claro — añadir dentro de un bloque @media o clase condicional */
+    .quick-settings-box {
+        background-color: rgba(240, 240, 240, 0.88);
+    }
+    /* ... etc. con colores invertidos */
+
+Esto requeriría detectar el tema activo en GNOME y aplicar CSS diferente,
+lo que está fuera del alcance del instalador actual.
+
+
+══════════════════════════════════════════════════════════════════════════════
+  FIN DE SUGERENCIAS
+  CSS activo en: modules/10-theme.sh
+  Tema instalado en: ~/.themes/Adwaita-Transparent/gnome-shell/gnome-shell.css
+══════════════════════════════════════════════════════════════════════════════
