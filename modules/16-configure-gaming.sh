@@ -364,8 +364,7 @@ echo "Instalando GameMode y MangoHud..."
 
 apt install -y \$APT_FLAGS \
     gamemode \
-    mangohud \
-    goverlay
+    mangohud
 
 echo "✓  GameMode y MangoHud instalados"
 
@@ -410,51 +409,6 @@ fi
 
 if [ "\$STEAM_OK" = "false" ]; then
     echo "⚠  Steam no se pudo instalar — instálalo manualmente tras el primer arranque"
-fi
-
-# ── Preconfigurar Steam (sin intervención del usuario al reiniciar) ──────────
-if [ "\$STEAM_OK" = "true" ] && [ -n "\$USERNAME" ]; then
-    STEAM_HOME="/home/\$USERNAME"
-    STEAM_DIR="\$STEAM_HOME/.local/share/Steam"
-    mkdir -p "\$STEAM_DIR/config"
-    mkdir -p "\$STEAM_DIR/compatibilitytools.d"
-
-    # Extraer bootstrap para que Steam ya tenga los binarios al primer arranque
-    BOOTSTRAP_TAR="/usr/lib/steam/bootstraplinux_ubuntu12_32.tar.xz"
-    if [ -f "\$BOOTSTRAP_TAR" ]; then
-        tar xf "\$BOOTSTRAP_TAR" -C "\$STEAM_DIR" 2>/dev/null || true
-        echo "  ✓ Bootstrap extraído"
-    fi
-
-    # Symlinks estándar de Steam
-    mkdir -p "\$STEAM_HOME/.steam"
-    ln -sf "\$STEAM_DIR" "\$STEAM_HOME/.steam/steam" 2>/dev/null || true
-    ln -sf "\$STEAM_DIR" "\$STEAM_HOME/.steam/root" 2>/dev/null || true
-
-    # steam.cfg — inhibir popup de bootstrap/actualización
-    cat > "\$STEAM_DIR/steam.cfg" << 'STEAMCFGEOF'
-BootStrapperInhibitAll=enable
-BootStrapperForceSelfUpdate=disable
-STEAMCFGEOF
-
-    # Deshabilitar autostart de Steam al login
-    AUTOSTART_DIR="\$STEAM_HOME/.config/autostart"
-    mkdir -p "\$AUTOSTART_DIR"
-    cat > "\$AUTOSTART_DIR/steam.desktop" << 'STEAMAUTOEOF'
-[Desktop Entry]
-Type=Application
-Name=Steam
-Exec=steam %U
-Hidden=true
-NoDisplay=true
-X-GNOME-Autostart-enabled=false
-STEAMAUTOEOF
-
-    # Ownership
-    chown -R \$(id -u \$USERNAME):\$(id -g \$USERNAME) \
-        "\$STEAM_DIR" "\$STEAM_HOME/.steam" "\$AUTOSTART_DIR/steam.desktop"
-
-    echo "✓  Steam preconfigurado (bootstrap + sin autostart + sin popup)"
 fi
 
 # ============================================================================
