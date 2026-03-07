@@ -401,8 +401,8 @@ apt-get install -y spotify-client
 # Sin esto Spotify ignora el tema oscuro de GNOME en la barra de título
 SPOTIFY_DESKTOP="/usr/share/applications/spotify.desktop"
 if [ -f "\$SPOTIFY_DESKTOP" ]; then
-    sed -i 's|^Exec=spotify|Exec=spotify --gtk-version=4|' "\$SPOTIFY_DESKTOP"
-    echo "✓  Spotify: fix tema del sistema aplicado (--gtk-version=4)"
+    sed -i 's|^Exec=spotify|Exec=spotify --ozone-platform=x11|' "\$SPOTIFY_DESKTOP"
+    echo "✓  Spotify: fix tema del sistema aplicado (--ozone-platform=x11)"
 fi
 
 echo "✓  Spotify instalado"
