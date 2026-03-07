@@ -77,8 +77,7 @@ apt install -y \$APT_FLAGS \
     plymouth \
     plymouth-theme-spinner \
     bolt \
-    gnome-keyring \
-    apparmor
+    gnome-keyring
 
 echo "✓  GNOME Shell instalado"
 
@@ -426,14 +425,6 @@ apt update
 apt install -y google-chrome-stable
 
 echo "✓  Google Chrome instalado"
-
-# Fix: tema del sistema (GTK4 / Wayland nativo / tema oscuro)
-# Sin esto Chrome ignora el tema oscuro de GNOME y se ve en modo claro
-CHROME_DESKTOP="/usr/share/applications/google-chrome.desktop"
-if [ -f "\$CHROME_DESKTOP" ]; then
-    sed -i 's|^Exec=/usr/bin/google-chrome-stable|Exec=/usr/bin/google-chrome-stable --gtk-version=4|' "\$CHROME_DESKTOP"
-    echo "✓  Chrome: fix tema del sistema aplicado (--gtk-version=4)"
-fi
 
 CHROOTEOF
 
