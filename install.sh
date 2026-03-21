@@ -1,0 +1,1600 @@
+#!/bin/bash
+# ══════════════════════════════════════════════════════════════════════════════
+# ubuntu-advanced-install — Orquestador principal
+#
+# Instalador modular de Ubuntu con debootstrap. Cada módulo es un script
+# independiente ejecutado como subproceso (bash modules/XX-nombre.sh).
+# El orquestador solo gestiona: configuración, validación, orden y logging.
+#
+# Uso:
+#   sudo ./install.sh              Instalación interactiva (recomendado)
+#   sudo ./install.sh --auto       Automática (requiere config.env)
+#   sudo ./install.sh --help       Ver todas las opciones
+#
+# Referentes de diseño: setup-alpine (Alpine), archinstall (Arch), Subiquity
+# ══════════════════════════════════════════════════════════════════════════════
+
+# NO usamos set -e en el orquestador: los módulos pueden fallar (EXTRA)
+# y run_all_modules() maneja el error por módulo. Cada módulo decide
+# su propia política de errores (set -e o control manual).
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODULES_DIR="$SCRIPT_DIR/modules"
+CONFIG_FILE="$SCRIPT_DIR/config.env"
+VERSION="4.3.0"
+
+VERBOSE_MODE="${VERBOSE_MODE:-false}"
+
+# ============================================================================
+# CONFIGURACIÓN DE LOGGING
+# ============================================================================
+LOG_DIR="$SCRIPT_DIR/logs"
+LOG_FILE="$LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
+
+# Crear directorio de logs
+mkdir -p "$LOG_DIR"
+
+# Colores (definidos antes de error_handler y log que los usan)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Trap: solo registra en log, no aborta (los módulos manejan sus errores)
+error_handler() {
+    local line=$1
+    echo "[$(date '+%H:%M:%S')] [TRAP] Error detectado en install.sh:$line" >> "$LOG_FILE"
+}
+
+
+# Funciones de logging
+_log() {
+    # $1=level $2=icon $3=color $4=message
+    printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" "$4" >> "$LOG_FILE"
+    echo -e "${3}${2}${NC} $4"
+}
+log_step()    { printf '[%s] [STEP] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE"; echo ""; echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "${CYAN}▶ $1${NC}"; echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
+log_success() { _log SUCCESS "✓" "$GREEN" "$1"; }
+log_error()   { _log ERROR "✗" "$RED" "$1"; }
+log_warning() { _log WARNING "⚠" "$YELLOW" "$1"; }
+log_info()    { _log INFO "ℹ" "$BLUE" "$1"; }
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        log_error "Este script debe ejecutarse como root"
+        exit 1
+    fi
+}
+
+log_info "Inicio de instalación Ubuntu"
+log_info "Log: $LOG_FILE"
+echo ""
+
+# ============================================================================
+# BARRA DE PROGRESO — fija en la última línea del terminal
+# ============================================================================
+# Arquitectura: UN SOLO PROCESO escribe al terminal.
+#
+# 1. _bar_init() activa scroll region (filas 1..N-1), barra en fila N
+# 2. Módulo en background: stdout → FIFO vía tee (log), stderr → /dev/tty
+# 3. Loop principal lee FIFO, imprime cada línea (scrollea en 1..N-1),
+#    repinta barra en fila N
+# 4. _bar_cleanup() restaura scroll region completa
+#
+# Dpkg::Progress-Fancy DESACTIVADO en setup_apt_progress() porque sus \r
+# no funcionan a través del pipe (cada \r se convierte en línea nueva).
+#
+# stdin del módulo ← /dev/tty → reads interactivos funcionan.
+# stderr del módulo → /dev/tty → prompts de read -p aparecen sin buffering.
+
+_BAR_ACTIVE=false
+_TERM_ROWS=24
+_TERM_COLS=80
+
+_update_term_size() {
+    _TERM_ROWS=$(tput lines 2>/dev/null) || _TERM_ROWS=24
+    _TERM_COLS=$(tput cols 2>/dev/null) || _TERM_COLS=80
+}
+_update_term_size
+trap '_update_term_size' WINCH
+
+_bar_init() {
+    _update_term_size
+    # Scroll region: filas 1 a N-1
+    printf '\033[1;%dr' "$(( _TERM_ROWS - 1 ))"
+    printf '\033[%d;1H' "$(( _TERM_ROWS - 1 ))"
+}
+
+_bar_paint() {
+    # $1=texto  $2=porcentaje
+    local text="$1" pct="${2:-0}"
+    [ "$pct" -gt 100 ] && pct=100
+    [ "$pct" -lt 0 ] && pct=0
+
+    local pct_str
+    printf -v pct_str "%3d%%" "$pct"
+
+    local overhead=$(( 12 + ${#text} ))
+    local bar_size=$(( _TERM_COLS - overhead ))
+    [ "$bar_size" -lt 8 ] && bar_size=8
+
+    local filled=$(( bar_size * pct / 100 ))
+    local empty=$(( bar_size - filled ))
+    local fill_str empty_str
+    printf -v fill_str "%${filled}s" ""; fill_str="${fill_str// /#}"
+    printf -v empty_str "%${empty}s" ""; empty_str="${empty_str// /.}"
+
+    # Guardar cursor → fila N → limpiar → pintar → restaurar cursor
+    printf '\0337'
+    printf '\033[%d;1H' "$_TERM_ROWS"
+    printf '\033[2K'
+    printf ' \033[32;1m[%s]\033[0m [\033[32;1m%s\033[0;2m%s\033[0m] \033[36m%s\033[0m' \
+        "$pct_str" "$fill_str" "$empty_str" "$text"
+    printf '\0338'
+}
+
+_bar_cleanup() {
+    [ "$_BAR_ACTIVE" = true ] || return 0
+    _update_term_size
+    # Restaurar scroll region completa
+    printf '\033[1;%dr' "$_TERM_ROWS"
+    # Limpiar fila de la barra
+    printf '\0337\033[%d;1H\033[2K\0338' "$_TERM_ROWS"
+    _BAR_ACTIVE=false
+}
+
+run_module_with_bar() {
+    # $1=module_path $2=module_log $3=bar_text $4=start_pct $5=end_pct $6=verbose
+    local module_path="$1" module_log="$2" bar_text="$3"
+    local start_pct="${4:-0}" end_pct="${5:-100}" verbose="${6:-false}"
+    local range=$(( end_pct - start_pct ))
+    local fifo exit_file
+    fifo=$(mktemp -u /tmp/.mod-fifo.XXXXXX)
+    exit_file=$(mktemp /tmp/.mod-exit.XXXXXX)
+    mkfifo "$fifo"
+
+    _BAR_ACTIVE=true
+    _bar_init
+    _bar_paint "$bar_text" "$start_pct"
+
+    # Módulo en background:
+    # - stdout → FIFO vía tee (para log + barra de progreso)
+    # - stderr → /dev/tty (prompts de read -p aparecen sin buffering)
+    # - stdin ← /dev/tty (para read interactivos)
+    # En modo verbose: stderr también al pipe (bash -x traces)
+    {
+        if [ "$verbose" = "true" ]; then
+            bash -x "$module_path" 2>&1
+        else
+            bash "$module_path" 2>/dev/tty
+        fi
+        echo $? >&3
+    } 3>"$exit_file" < /dev/tty | tee -a "$module_log" > "$fifo" &
+    local bg_pid=$!
+
+    # Leer FIFO línea a línea — único escritor al terminal
+    local n=0
+    while IFS= read -r line; do
+        printf '%s\n' "$line"
+        n=$(( n + 1 ))
+        if [ "$range" -gt 0 ]; then
+            local p=$(( range * n / (n + 30) ))
+            local pct=$(( start_pct + p ))
+            [ "$pct" -ge "$end_pct" ] && pct=$(( end_pct - 1 ))
+            _bar_paint "$bar_text" "$pct"
+        fi
+    done < "$fifo"
+
+    wait "$bg_pid" 2>/dev/null
+    local exit_code=0
+    [ -f "$exit_file" ] && exit_code=$(cat "$exit_file" 2>/dev/null)
+    exit_code="${exit_code:-0}"
+    rm -f "$fifo" "$exit_file"
+
+    _bar_paint "$bar_text" "$end_pct"
+    _bar_cleanup
+
+    return "$exit_code"
+}
+
+trap '_bar_cleanup 2>/dev/null; error_handler $LINENO' ERR
+trap '_bar_cleanup 2>/dev/null' EXIT
+
+# ============================================================================
+# CHROOT: usamos arch-chroot (paquete arch-install-scripts)
+# ============================================================================
+# arch-chroot monta automáticamente /proc, /sys, /dev, /dev/pts, /dev/shm,
+# /run y /tmp como pseudofilesystems nuevos (no bind mounts), y los desmonta
+# al salir. También configura resolv.conf para DNS.
+# No necesitamos funciones chroot_mount/chroot_umount manuales.
+# ============================================================================
+
+##############################################################################
+# CONFIGURACIÓN INTERACTIVA
+##############################################################################
+
+interactive_config() {
+    clear
+    echo -e "${YELLOW}"
+    cat << 'BANNER'
+   __  ____                __           ___       __                                __   ____           __        ____
+  / / / / /_  __  ______  / /___  __   /   | ____/ /   ______ _____  ________  ____/ /  /  _/___  _____/ /_____ _/ / /
+ / / / / __ \/ / / / __ \/ __/ / / /  / /| |/ __  / | / / __ `/ __ \/ ___/ _ \/ __  /   / // __ \/ ___/ __/ __ `/ / / 
+/ /_/ / /_/ / /_/ / / / / /_/ /_/ /  / ___ / /_/ /| |/ / /_/ / / / / /__/  __/ /_/ /  _/ // / / (__  ) /_/ /_/ / / /  
+\____/_.___/\__,_/_/ /_/\__/\__,_/  /_/  |_\__,_/ |___/\__,_/_/ /_/\___/\___/\__,_/  /___/_/ /_/____/\__/\__,_/_/_/   
+BANNER
+    echo -e "${NC}"
+    echo -e "${DIM}  v${VERSION}${NC}"
+    echo ""
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║           CONFIGURACIÓN DE INSTALACIÓN                    ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    # ── 1. Sistema base ──────────────────────────────────────────────────────
+    echo -e "${YELLOW}[1/7] Sistema base${NC}"
+    echo ""
+    echo "  Versión de Ubuntu:"
+    echo "    1) 24.04 LTS Noble Numbat (recomendado)"
+    echo "    2) 22.04 LTS Jammy Jellyfish"
+    echo "    3) 20.04 LTS Focal Fossa"
+    echo "    4) 25.10 Questing Quokka (no-LTS)"
+    echo "    5) 26.04 LTS Resolute Raccoon (en desarrollo)"
+    read -p "  Versión [1]: " ver_choice
+    case ${ver_choice:-1} in
+        1) UBUNTU_VERSION="noble" ;;
+        2) UBUNTU_VERSION="jammy" ;;
+        3) UBUNTU_VERSION="focal" ;;
+        4) UBUNTU_VERSION="questing" ;;
+        5) UBUNTU_VERSION="resolute" ;;
+        *) UBUNTU_VERSION="noble" ;;
+    esac
+    echo ""
+
+    # ── 2. Hostname ──────────────────────────────────────────────────────────
+    echo -e "${YELLOW}[2/7] Hostname${NC}"
+    echo ""
+    read -p "  Nombre del equipo [ubuntu]: " HOSTNAME
+    HOSTNAME=${HOSTNAME:-ubuntu}
+    echo ""
+
+    # ── 3. Usuario ───────────────────────────────────────────────────────────
+    echo -e "${YELLOW}[3/7] Usuario${NC}"
+    echo ""
+    read -p "  Nombre de usuario: " USERNAME
+    while [ -z "$USERNAME" ]; do
+        echo "  El nombre de usuario no puede estar vacío"
+        read -p "  Nombre de usuario: " USERNAME
+    done
+    echo ""
+
+    echo "  Contraseña para $USERNAME:"
+    while true; do
+        read -s -p "  Contraseña: " USER_PASSWORD
+        echo ""
+        read -s -p "  Confirmar:  " USER_PASSWORD_CONFIRM
+        echo ""
+        if [ "$USER_PASSWORD" = "$USER_PASSWORD_CONFIRM" ] && [ -n "$USER_PASSWORD" ]; then
+            break
+        fi
+        [ -z "$USER_PASSWORD" ] && echo -e "  ${RED}La contraseña no puede estar vacía${NC}"
+        [ "$USER_PASSWORD" != "$USER_PASSWORD_CONFIRM" ] && echo -e "  ${RED}Las contraseñas no coinciden${NC}"
+        echo ""
+    done
+
+    read -p "  ¿Misma contraseña para root? (s/n) [s]: " same_pass
+    if [[ ${same_pass:-s} =~ ^[SsYy]$ ]]; then
+        ROOT_PASSWORD="$USER_PASSWORD"
+    else
+        echo ""
+        echo "  Contraseña para root:"
+        while true; do
+            read -s -p "  Contraseña: " ROOT_PASSWORD
+            echo ""
+            read -s -p "  Confirmar:  " ROOT_PASSWORD_CONFIRM
+            echo ""
+            if [ "$ROOT_PASSWORD" = "$ROOT_PASSWORD_CONFIRM" ] && [ -n "$ROOT_PASSWORD" ]; then
+                break
+            fi
+            [ -z "$ROOT_PASSWORD" ] && echo -e "  ${RED}La contraseña no puede estar vacía${NC}"
+            [ "$ROOT_PASSWORD" != "$ROOT_PASSWORD_CONFIRM" ] && echo -e "  ${RED}Las contraseñas no coinciden${NC}"
+            echo ""
+        done
+    fi
+    echo ""
+
+    # ── 4. Hardware ──────────────────────────────────────────────────────────
+    echo -e "${YELLOW}[4/7] Hardware${NC}"
+    echo ""
+    echo "  Tipo: 1) Desktop  2) Laptop"
+    read -p "  Opción [1]: " hw_choice
+    [ "${hw_choice:-1}" = "2" ] && IS_LAPTOP="true" || IS_LAPTOP="false"
+
+    # WiFi y Bluetooth se autodetectan en el módulo 22.
+    # No preguntar — si hay hardware, se configura; si no, se omite.
+    HAS_WIFI="true"
+    HAS_BLUETOOTH="true"
+    echo ""
+
+    # ── 5. Componentes ───────────────────────────────────────────────────────
+    echo -e "${YELLOW}[5/7] Componentes${NC}"
+    echo ""
+
+    read -p "  ¿Escritorio GNOME? (s/n) [s]: " inst_gnome
+    [[ ${inst_gnome:-s} =~ ^[SsYy]$ ]] && INSTALL_GNOME="true" || INSTALL_GNOME="false"
+
+    if [ "$INSTALL_GNOME" = "false" ]; then
+        # ── Modo servidor / headless ─────────────────────────────────────────
+        # Sin escritorio: desactivar todo lo que requiere GUI
+        echo ""
+        echo "  Modo servidor — sin escritorio gráfico"
+        echo "  (Multimedia, gaming, webapps, Spotify, OBS, Obsidian desactivados)"
+        echo ""
+        GDM_AUTOLOGIN="false"
+        GNOME_OPTIMIZE_MEMORY="false"
+        GNOME_TRANSPARENT_THEME="false"
+        GNOME_DOCK="ubuntu-dock"
+        INSTALL_MULTIMEDIA="false"
+        INSTALL_SPOTIFY="n"
+        INSTALL_GAMING="false"
+        INSTALL_PROTONPLUS="false"
+        INSTALL_DISCORD="n"; INSTALL_UNIGINE="n"
+        STEAM_METHOD="1"
+        INSTALL_CACHYOS_KERNEL="false"; CACHYOS_SCHEDULER="1"
+        INSTALL_FALCOND="false"; INSTALL_OPTISCALER="false"
+        GPU_MANUAL="9"
+        INSTALL_ONLYOFFICE="n"; INSTALL_AMULE="n"; INSTALL_MULLVAD="n"
+        INSTALL_OBS="n"; INSTALL_OBSIDIAN="n"
+        INSTALL_STREAMING_WEBAPPS="false"
+
+        # Desarrollo y CLI sí tienen sentido en servidor
+        read -p "  ¿Desarrollo (git, build-essential, python, etc.)? (s/n) [n]: " inst_dev
+        [[ ${inst_dev:-n} =~ ^[SsYy]$ ]] && INSTALL_DEVELOPMENT="true" || INSTALL_DEVELOPMENT="false"
+        if [ "$INSTALL_DEVELOPMENT" = "true" ]; then
+            INSTALL_VSCODE="n"  # Sin GUI
+            echo "    NodeJS: 1) No  2) LTS"
+            read -p "    Opción [1]: " opt_nodejs
+            NODEJS_OPTION="${opt_nodejs:-1}"
+            read -p "    ¿Rust (rustup)? (s/n) [n]: " opt_rust
+            INSTALL_RUST="${opt_rust:-n}"
+            read -p "    ¿topgrade? (s/n) [n]: " opt_topgrade
+            INSTALL_TOPGRADE="${opt_topgrade:-n}"
+        else
+            INSTALL_VSCODE="n"; NODEJS_OPTION="1"; INSTALL_RUST="n"; INSTALL_TOPGRADE="n"
+        fi
+
+        read -p "  ¿Mullvad VPN? (s/n) [n]: " INSTALL_MULLVAD
+        INSTALL_MULLVAD=${INSTALL_MULLVAD:-n}
+
+        read -p "  ¿Gestores CLI (kernel-manager + firmware-manager)? (s/n) [n]: " inst_sysmgr
+        [[ ${inst_sysmgr:-n} =~ ^[SsYy]$ ]] && INSTALL_SYS_MANAGERS="true" || INSTALL_SYS_MANAGERS="false"
+        echo ""
+    else
+        # ── Modo escritorio GNOME ────────────────────────────────────────────
+        INSTALL_MULTIMEDIA="true"
+        read -p "  ¿Spotify? (s/n) [s]: " opt_spotify
+        [[ ${opt_spotify:-s} =~ ^[SsYy]$ ]] && INSTALL_SPOTIFY="s" || INSTALL_SPOTIFY="n"
+
+        read -p "  ¿Desarrollo? (s/n) [n]: " inst_dev
+        [[ ${inst_dev:-n} =~ ^[SsYy]$ ]] && INSTALL_DEVELOPMENT="true" || INSTALL_DEVELOPMENT="false"
+
+        if [ "$INSTALL_DEVELOPMENT" = "true" ]; then
+            read -p "    ¿Visual Studio Code? (s/n) [s]: " opt_vscode
+            INSTALL_VSCODE="${opt_vscode:-s}"
+            echo "    NodeJS: 1) No  2) LTS (recomendado)"
+            read -p "    Opción [2]: " opt_nodejs
+            NODEJS_OPTION="${opt_nodejs:-2}"
+            read -p "    ¿Rust (rustup)? (s/n) [n]: " opt_rust
+            INSTALL_RUST="${opt_rust:-n}"
+            read -p "    ¿topgrade? (s/n) [s]: " opt_topgrade
+            INSTALL_TOPGRADE="${opt_topgrade:-s}"
+        else
+            INSTALL_VSCODE="n"; NODEJS_OPTION="1"; INSTALL_RUST="n"; INSTALL_TOPGRADE="n"
+        fi
+
+        read -p "  ¿Gaming? (s/n) [n]: " inst_gaming
+        [[ ${inst_gaming:-n} =~ ^[SsYy]$ ]] && INSTALL_GAMING="true" || INSTALL_GAMING="false"
+
+        if [ "$INSTALL_GAMING" = "true" ]; then
+            read -p "    ¿ProtonPlus (gestor Proton/Wine-GE)? (s/n) [s]: " inst_pp
+            [[ ${inst_pp:-s} =~ ^[SsYy]$ ]] && INSTALL_PROTONPLUS="true" || INSTALL_PROTONPLUS="false"
+            read -p "    ¿Discord? (s/n) [n]: " INSTALL_DISCORD
+            INSTALL_DISCORD=${INSTALL_DISCORD:-n}
+            read -p "    ¿Unigine Heaven benchmark? (s/n) [n]: " INSTALL_UNIGINE
+            INSTALL_UNIGINE=${INSTALL_UNIGINE:-n}
+            echo ""
+            echo "    Steam: 1) Estable — GLFS tarball (método probado, necesita i386)"
+            echo "           2) Beta — SteamRT3 64-bit containerizado (experimental, sin i386)"
+            read -p "    Opción [1]: " opt_steam
+            STEAM_METHOD="${opt_steam:-1}"
+            echo ""
+            read -p "    ¿Kernel CachyOS (gaming optimizado)? (s/n) [n]: " inst_cachy
+            if [[ ${inst_cachy:-n} =~ ^[SsYy]$ ]]; then
+                INSTALL_CACHYOS_KERNEL="true"
+                echo ""
+                echo "      Scheduler del kernel:"
+                echo "        1) BORE         — Burst-Oriented Response Enhancer sobre EEVDF"
+                echo "                           Mejor respuesta interactiva bajo carga. Ideal gaming."
+                echo "        2) BORE + sched-ext — BORE con soporte sched-ext (scx_bpfland, etc.)"
+                echo "                           Gaming + posibilidad de cambiar scheduler en caliente."
+                echo "        3) EEVDF        — Earliest Eligible Virtual Deadline First (stock CachyOS)"
+                echo "                           Equilibrio rendimiento/fairness. Buen allround."
+                echo "        4) CFS clásico  — Completely Fair Scheduler (legacy, pre-6.6)"
+                echo "                           Máxima compatibilidad. Sin parches de scheduler."
+                echo ""
+                read -p "      Opción [1]: " CACHYOS_SCHEDULER
+                CACHYOS_SCHEDULER="${CACHYOS_SCHEDULER:-1}"
+            else
+                INSTALL_CACHYOS_KERNEL="false"
+                CACHYOS_SCHEDULER="1"
+            fi
+            echo ""
+            read -p "    ¿Falcond (daemon auto-optimización gaming de PikaOS)? (s/n) [n]: " inst_falcond
+            [[ ${inst_falcond:-n} =~ ^[SsYy]$ ]] && INSTALL_FALCOND="true" || INSTALL_FALCOND="false"
+            echo ""
+            read -p "    ¿OptiScaler (FSR4/DLSS/XeSS para todos los juegos)? (s/n) [n]: " inst_optiscaler
+            [[ ${inst_optiscaler:-n} =~ ^[SsYy]$ ]] && INSTALL_OPTISCALER="true" || INSTALL_OPTISCALER="false"
+            echo ""
+            echo "    GPU: 1) AMD  2) Intel  3) Intel+NVIDIA  4) Intel+AMD"
+            echo "         5) AMD+AMD  6) AMD+NVIDIA  7) NVIDIA  8) VM  9) Auto"
+            read -p "    Opción [9]: " GPU_MANUAL
+            GPU_MANUAL="${GPU_MANUAL:-9}"
+        else
+            INSTALL_PROTONPLUS="false"; GPU_MANUAL="9"
+            INSTALL_DISCORD="n"; INSTALL_UNIGINE="n"
+            STEAM_METHOD="1"
+            INSTALL_CACHYOS_KERNEL="false"; CACHYOS_SCHEDULER="1"
+            INSTALL_FALCOND="false"
+            INSTALL_OPTISCALER="false"
+        fi
+
+        read -p "  ¿OnlyOffice Desktop? (s/n) [n]: " INSTALL_ONLYOFFICE
+        INSTALL_ONLYOFFICE=${INSTALL_ONLYOFFICE:-n}
+        read -p "  ¿aMule? (s/n) [n]: " INSTALL_AMULE
+        INSTALL_AMULE=${INSTALL_AMULE:-n}
+        read -p "  ¿OBS Studio? (s/n) [n]: " INSTALL_OBS
+        INSTALL_OBS=${INSTALL_OBS:-n}
+        read -p "  ¿Obsidian? (s/n) [n]: " INSTALL_OBSIDIAN
+        INSTALL_OBSIDIAN=${INSTALL_OBSIDIAN:-n}
+        read -p "  ¿Mullvad VPN? (s/n) [n]: " INSTALL_MULLVAD
+        INSTALL_MULLVAD=${INSTALL_MULLVAD:-n}
+        echo ""
+        read -p "  ¿Webapps? (Netflix, HBO, YouTube, ChatGPT, Claude...) (s/n) [n]: " inst_webapps
+        [[ ${inst_webapps:-n} =~ ^[SsYy]$ ]] && INSTALL_STREAMING_WEBAPPS="true" || INSTALL_STREAMING_WEBAPPS="false"
+        echo ""
+        read -p "  ¿Gestores CLI (kernel-manager + firmware-manager)? (s/n) [n]: " inst_sysmgr
+        [[ ${inst_sysmgr:-n} =~ ^[SsYy]$ ]] && INSTALL_SYS_MANAGERS="true" || INSTALL_SYS_MANAGERS="false"
+        echo ""
+    fi  # fin INSTALL_GNOME
+
+    # ── 6. Personalización de GNOME ──────────────────────────────────────────
+    if [ "$INSTALL_GNOME" = "true" ]; then
+        echo -e "${YELLOW}[6/7] Personalización de GNOME${NC}"
+        echo ""
+
+        GNOME_OPTIMIZE_MEMORY="true"
+        GNOME_TRANSPARENT_THEME="true"
+
+        echo "  Panel: 1) Ubuntu Dock (lateral)  2) Dash to Panel (inferior)"
+        read -p "  Opción [2]: " opt_dock
+        case "${opt_dock:-2}" in
+            1) GNOME_DOCK="ubuntu-dock" ;;
+            *) GNOME_DOCK="dash-to-panel" ;;
+        esac
+
+        read -p "  ¿Autologin GDM? (s/n) [s]: " inst_autologin
+        [[ ${inst_autologin:-s} =~ ^[SsYy]$ ]] && GDM_AUTOLOGIN="true" || GDM_AUTOLOGIN="false"
+        echo ""
+    fi
+
+    # ── 7. Optimizaciones ────────────────────────────────────────────────────
+    echo -e "${YELLOW}[7/7] Optimizaciones${NC}"
+    echo ""
+
+    MINIMIZE_SYSTEMD="true"
+
+    echo "  Auto-updates: 1) Solo seguridad  2) Todas  3) No configurar"
+    read -p "  Opción [1]: " opt_autoupdate
+    AUTO_UPDATE_CHOICE="${opt_autoupdate:-1}"
+
+    if [ "$IS_LAPTOP" = "true" ]; then
+        echo "  Energía: 1) power-profiles-daemon  2) TLP"
+        read -p "  Opción [1]: " opt_power
+        POWER_MANAGER="${opt_power:-1}"
+        read -p "  ¿nothrottle (Intel throttling)? (s/n) [n]: " opt_nothrottle
+        [[ ${opt_nothrottle:-n} =~ ^[SsYy]$ ]] && INSTALL_NOTHROTTLE="true" || INSTALL_NOTHROTTLE="false"
+    else
+        POWER_MANAGER="1"; INSTALL_NOTHROTTLE="false"
+    fi
+
+    echo ""
+    echo "  Parámetros del kernel (GRUB_CMDLINE_LINUX_DEFAULT):"
+    echo ""
+    echo "    1) Base — escritorio optimizado (por defecto)"
+    echo "       quiet splash intel_pstate=active no_timer_check"
+    echo "       page_alloc.shuffle=1 rcupdate.rcu_expedited=1"
+    echo "       nowatchdog nmi_watchdog=0"
+    echo ""
+    echo "    2) Base + Gaming — baja latencia, mantiene seguridad"
+    echo "       Añade: preempt=full tsc=reliable split_lock_detect=off"
+    echo ""
+    echo "    3) Base + Gaming + mitigations=off — MÁXIMO RENDIMIENTO"
+    echo "       Añade todo lo de (2) más mitigations=off"
+    echo "       ⚠ Desactiva protecciones Spectre/Meltdown (+5-10% FPS)"
+    echo ""
+    echo "    4) Mínimo — solo quiet splash"
+    echo ""
+    read -p "  Opción [1]: " opt_kernel_params
+    KERNEL_PARAMS_LEVEL="${opt_kernel_params:-1}"
+
+    # ── Resumen ──────────────────────────────────────────────────────────────
+    clear
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║                 RESUMEN DE CONFIGURACIÓN                  ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "${YELLOW}Sistema${NC}"
+    echo "  Ubuntu $UBUNTU_VERSION · $HOSTNAME · $USERNAME"
+    echo "  $([ "$IS_LAPTOP" = "true" ] && echo "Laptop" || echo "Desktop") · WiFi/BT: autodetectado"
+    echo ""
+    echo -e "${YELLOW}Componentes${NC}"
+    echo "  GNOME: $INSTALL_GNOME$([ "$INSTALL_GNOME" = "true" ] && echo " ($GNOME_DOCK, autologin: $GDM_AUTOLOGIN)")"
+    echo "  Multimedia: $INSTALL_MULTIMEDIA$([ "$INSTALL_SPOTIFY" = "s" ] && echo " (+Spotify)")"
+    echo "  Desarrollo: $INSTALL_DEVELOPMENT$([ "$INSTALL_DEVELOPMENT" = "true" ] && echo " (VSCode: $INSTALL_VSCODE, Node: $NODEJS_OPTION, Rust: $INSTALL_RUST, topgrade: $INSTALL_TOPGRADE)")"
+    echo "  Gaming: $INSTALL_GAMING$([ "$INSTALL_GAMING" = "true" ] && echo " (GPU: $GPU_MANUAL, CachyOS kernel: $INSTALL_CACHYOS_KERNEL)")"
+    [ "$INSTALL_GAMING" = "true" ] && echo "         Falcond: $INSTALL_FALCOND, OptiScaler: $INSTALL_OPTISCALER, Discord: $INSTALL_DISCORD"
+    echo "  Extras: OnlyOffice: $INSTALL_ONLYOFFICE, aMule: $INSTALL_AMULE, Mullvad: $INSTALL_MULLVAD"
+    echo ""
+    echo -e "${YELLOW}Optimizaciones${NC}"
+    echo "  systemd: minimizado · auto-updates: opción $AUTO_UPDATE_CHOICE"
+    echo "  Parámetros kernel: $(case "$KERNEL_PARAMS_LEVEL" in 1) echo "base";; 2) echo "base + gaming";; 3) echo "base + gaming + mitigations=off";; 4) echo "mínimo";; *) echo "base";; esac)"
+    [ "$IS_LAPTOP" = "true" ] && echo "  Energía: $([ "$POWER_MANAGER" = "1" ] && echo "power-profiles-daemon" || echo "TLP") · nothrottle: $INSTALL_NOTHROTTLE"
+    echo "  Almacenamiento: scheduler I/O + fstrim + readahead (automático)"
+    echo ""
+
+    read -p "¿Guardar configuración? (s/n) [s]: " save_conf
+    if [[ ${save_conf:-s} =~ ^[SsYy]$ ]]; then
+        save_config
+    fi
+    echo ""
+
+    export_config_vars
+}
+
+##############################################################################
+# GUARDAR CONFIGURACIÓN
+##############################################################################
+
+save_config() {
+    cat > "$CONFIG_FILE" << EOF
+# ══════════════════════════════════════════════════════════════════════════════
+# ubuntu-advanced-install — config.env
+# Generada: $(date)
+# Documentación: docs/README.md | Editar y ejecutar: sudo ./install.sh --auto
+# ══════════════════════════════════════════════════════════════════════════════
+
+# === SISTEMA BASE ===
+UBUNTU_VERSION="$UBUNTU_VERSION"
+TARGET_DISK="${TARGET_DISK:-/dev/vda}"
+TARGET="${TARGET:-/mnt/ubuntu}"
+HOSTNAME="$HOSTNAME"
+USERNAME="$USERNAME"
+
+# === CREDENCIALES ===
+USER_PASSWORD="$USER_PASSWORD"
+ROOT_PASSWORD="$ROOT_PASSWORD"
+
+# === HARDWARE ===
+IS_LAPTOP="$IS_LAPTOP"
+HAS_WIFI="$HAS_WIFI"
+HAS_BLUETOOTH="$HAS_BLUETOOTH"
+
+# === COMPONENTES ===
+INSTALL_GNOME="$INSTALL_GNOME"
+GDM_AUTOLOGIN="${GDM_AUTOLOGIN:-true}"
+GNOME_OPTIMIZE_MEMORY="${GNOME_OPTIMIZE_MEMORY:-true}"
+GNOME_TRANSPARENT_THEME="${GNOME_TRANSPARENT_THEME:-true}"
+GNOME_DOCK="${GNOME_DOCK:-dash-to-panel}"
+INSTALL_MULTIMEDIA="$INSTALL_MULTIMEDIA"
+INSTALL_SPOTIFY="${INSTALL_SPOTIFY:-s}"
+INSTALL_DEVELOPMENT="$INSTALL_DEVELOPMENT"
+INSTALL_VSCODE="${INSTALL_VSCODE:-s}"
+NODEJS_OPTION="${NODEJS_OPTION:-2}"
+INSTALL_RUST="${INSTALL_RUST:-n}"
+INSTALL_TOPGRADE="${INSTALL_TOPGRADE:-s}"
+INSTALL_GAMING="$INSTALL_GAMING"
+INSTALL_PROTONPLUS="${INSTALL_PROTONPLUS:-false}"
+GPU_MANUAL="${GPU_MANUAL:-9}"
+INSTALL_DISCORD="${INSTALL_DISCORD:-n}"
+INSTALL_UNIGINE="${INSTALL_UNIGINE:-n}"
+STEAM_METHOD="${STEAM_METHOD:-1}"
+INSTALL_CACHYOS_KERNEL="${INSTALL_CACHYOS_KERNEL:-false}"
+CACHYOS_SCHEDULER="${CACHYOS_SCHEDULER:-1}"
+INSTALL_FALCOND="${INSTALL_FALCOND:-false}"
+INSTALL_OPTISCALER="${INSTALL_OPTISCALER:-false}"
+INSTALL_ONLYOFFICE="${INSTALL_ONLYOFFICE:-n}"
+INSTALL_AMULE="${INSTALL_AMULE:-n}"
+INSTALL_MULLVAD="${INSTALL_MULLVAD:-n}"
+INSTALL_STREAMING_WEBAPPS="${INSTALL_STREAMING_WEBAPPS:-false}"
+INSTALL_SYS_MANAGERS="${INSTALL_SYS_MANAGERS:-false}"
+
+# === OPTIMIZACIONES ===
+MINIMIZE_SYSTEMD="$MINIMIZE_SYSTEMD"
+ENABLE_SECURITY="${ENABLE_SECURITY:-false}"
+AUTO_UPDATE_CHOICE="${AUTO_UPDATE_CHOICE:-1}"
+KERNEL_PARAMS_LEVEL="${KERNEL_PARAMS_LEVEL:-1}"
+POWER_MANAGER="${POWER_MANAGER:-1}"
+INSTALL_NOTHROTTLE="${INSTALL_NOTHROTTLE:-false}"
+
+# === OPCIONES AVANZADAS ===
+DUAL_BOOT="${DUAL_BOOT:-false}"
+UBUNTU_SIZE_GB="${UBUNTU_SIZE_GB:-50}"
+EOF
+
+    chmod 600 "$CONFIG_FILE"
+    echo -e "${GREEN}✓ Configuración guardada en $CONFIG_FILE${NC}"
+}
+
+##############################################################################
+# CARGAR O CREAR CONFIGURACIÓN
+##############################################################################
+
+
+setup_apt_progress() {
+    # ── Configuración APT ──────────────────────────────────────────────────
+    # Dpkg::Progress-Fancy DESACTIVADO: genera barras con \r que se mezclan
+    # con el output de los módulos cuando se usa pipe (tee para log).
+    # Solo activamos colores APT para legibilidad.
+
+    local APT_PROGRESS_CONF='// Configurado por ubuntu-advanced-install
+Dpkg::Progress-Fancy "0";
+APT::Color "1";'
+
+    # Sistema live (host)
+    if [ -d /etc/apt/apt.conf.d ] && [ ! -f /etc/apt/apt.conf.d/99-installer-progress ]; then
+        echo "$APT_PROGRESS_CONF" > /etc/apt/apt.conf.d/99-installer-progress
+    fi
+
+    # Chroot ($TARGET) — solo si el directorio ya existe (post-debootstrap)
+    if [ -d "${TARGET:-}/etc/apt/apt.conf.d" ] && [ ! -f "${TARGET}/etc/apt/apt.conf.d/99-installer-progress" ]; then
+        echo "$APT_PROGRESS_CONF" > "${TARGET}/etc/apt/apt.conf.d/99-installer-progress"
+    fi
+}
+
+export_config_vars() {
+    # Defaults para variables que no se preguntan en interactive_config
+    TARGET_DISK="${TARGET_DISK:-/dev/vda}"
+    TARGET="${TARGET:-/mnt/ubuntu}"
+
+    # Exportar todas las variables de configuración para módulos
+    export UBUNTU_VERSION TARGET_DISK TARGET HOSTNAME USERNAME \
+        USER_PASSWORD ROOT_PASSWORD IS_LAPTOP HAS_WIFI HAS_BLUETOOTH \
+        ENABLE_SECURITY MINIMIZE_SYSTEMD INSTALL_GNOME GDM_AUTOLOGIN \
+        GNOME_OPTIMIZE_MEMORY GNOME_TRANSPARENT_THEME GNOME_DOCK \
+        INSTALL_MULTIMEDIA INSTALL_SPOTIFY INSTALL_DEVELOPMENT INSTALL_VSCODE \
+        NODEJS_OPTION INSTALL_RUST INSTALL_TOPGRADE INSTALL_GAMING \
+        INSTALL_PROTONPLUS GPU_MANUAL INSTALL_DISCORD INSTALL_UNIGINE \
+        STEAM_METHOD \
+        INSTALL_CACHYOS_KERNEL CACHYOS_SCHEDULER \
+        INSTALL_FALCOND INSTALL_OPTISCALER \
+        INSTALL_ONLYOFFICE INSTALL_AMULE INSTALL_MULLVAD \
+        INSTALL_STREAMING_WEBAPPS \
+        INSTALL_SYS_MANAGERS \
+        AUTO_UPDATE_CHOICE KERNEL_PARAMS_LEVEL POWER_MANAGER INSTALL_NOTHROTTLE DUAL_BOOT \
+        UBUNTU_SIZE_GB
+
+    # Configurar barra de progreso apt en live y en chroot
+    setup_apt_progress
+}
+
+##############################################################################
+# VALIDACIÓN DE CONFIGURACIÓN
+##############################################################################
+# Inspirado en: Alpine (setup-alpine valida cada campo), Subiquity (schema),
+# archinstall (type validation). Garantiza que config.env es coherente ANTES
+# de tocar disco.
+##############################################################################
+
+validate_config() {
+    local errors=0
+
+    _vfail() { echo -e "  ${RED}✗${NC} $1"; errors=$(( errors + 1 )); }
+    _vok()   { echo -e "  ${GREEN}✓${NC} $1"; }
+
+    echo ""
+    echo -e "${CYAN}Validando configuración...${NC}"
+    echo ""
+
+    # ── Campos obligatorios ──────────────────────────────────────────────────
+    [ -n "${UBUNTU_VERSION:-}" ]  && _vok "UBUNTU_VERSION=$UBUNTU_VERSION"  || _vfail "UBUNTU_VERSION no definido"
+    [ -n "${HOSTNAME:-}" ]        && _vok "HOSTNAME=$HOSTNAME"              || _vfail "HOSTNAME no definido"
+    [ -n "${USERNAME:-}" ]        && _vok "USERNAME=$USERNAME"              || _vfail "USERNAME no definido"
+    [ -n "${TARGET:-}" ]          && _vok "TARGET=$TARGET"                  || _vfail "TARGET no definido"
+
+    # ── UBUNTU_VERSION debe ser un codename conocido ─────────────────────────
+    local known_versions="focal jammy noble oracular questing resolute"
+    if [ -n "${UBUNTU_VERSION:-}" ]; then
+        if ! echo "$known_versions" | grep -qw "$UBUNTU_VERSION"; then
+            _vfail "UBUNTU_VERSION='$UBUNTU_VERSION' no reconocido (válidos: $known_versions)"
+        fi
+    fi
+
+    # ── USERNAME: sin espacios, sin caracteres especiales, lowercase ─────────
+    if [ -n "${USERNAME:-}" ]; then
+        if ! echo "$USERNAME" | grep -qP '^[a-z_][a-z0-9_-]*$'; then
+            _vfail "USERNAME='$USERNAME' inválido (debe ser lowercase, sin espacios, empezar con letra)"
+        fi
+    fi
+
+    # ── Booleanos: deben ser "true" o "false" ────────────────────────────────
+    local bool_vars="IS_LAPTOP HAS_WIFI HAS_BLUETOOTH INSTALL_GNOME INSTALL_MULTIMEDIA
+                     INSTALL_DEVELOPMENT INSTALL_GAMING INSTALL_PROTONPLUS
+                     GDM_AUTOLOGIN GNOME_OPTIMIZE_MEMORY GNOME_TRANSPARENT_THEME
+                     MINIMIZE_SYSTEMD ENABLE_SECURITY
+                     INSTALL_NOTHROTTLE DUAL_BOOT"
+    for var in $bool_vars; do
+        local val="${!var:-}"
+        if [ -n "$val" ] && [ "$val" != "true" ] && [ "$val" != "false" ]; then
+            _vfail "$var='$val' debe ser 'true' o 'false'"
+        fi
+    done
+
+    # ── Contraseñas: no se almacenan en config.env ─────────────────────────
+    # Se piden interactivamente si no están en memoria. No es error que falten.
+
+    # ── TARGET_DISK: si está definido, debe existir como block device ────────
+    if [ -n "${TARGET_DISK:-}" ] && [ ! -b "$TARGET_DISK" ]; then
+        # Solo avisar, no fallar — puede ser correcto en modo config-only
+        echo -e "  ${YELLOW}⚠${NC} TARGET_DISK=$TARGET_DISK no existe como dispositivo de bloque"
+    fi
+
+    # ── GNOME_DOCK: valores válidos ──────────────────────────────────────────
+    if [ "${INSTALL_GNOME:-}" = "true" ] && [ -n "${GNOME_DOCK:-}" ]; then
+        case "$GNOME_DOCK" in
+            ubuntu-dock|dash-to-panel) ;;
+            *) _vfail "GNOME_DOCK='$GNOME_DOCK' inválido (ubuntu-dock|dash-to-panel)" ;;
+        esac
+    fi
+
+    # ── GPU_MANUAL: 1-9 ──────────────────────────────────────────────────────
+    if [ "${INSTALL_GAMING:-}" = "true" ] && [ -n "${GPU_MANUAL:-}" ]; then
+        case "$GPU_MANUAL" in
+            [1-9]) ;;
+            *) _vfail "GPU_MANUAL='$GPU_MANUAL' fuera de rango (1-9)" ;;
+        esac
+    fi
+
+    # ── Resultado ────────────────────────────────────────────────────────────
+    echo ""
+    if [ "$errors" -gt 0 ]; then
+        echo -e "${RED}✗ Configuración inválida: $errors errores${NC}"
+        echo -e "${YELLOW}  Corrige config.env o ejecuta: $0 --config${NC}"
+        return 1
+    else
+        echo -e "${GREEN}✓ Configuración válida${NC}"
+        return 0
+    fi
+}
+
+load_or_create_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        echo -e "${GREEN}✓ Configuración encontrada: $CONFIG_FILE${NC}"
+        echo ""
+        read -p "¿Usar configuración existente? (s/n/e=editar) [s]: " use_existing
+        
+        case $use_existing in
+            [Ee])
+                ${EDITOR:-nano} "$CONFIG_FILE"
+                source "$CONFIG_FILE"
+                export_config_vars
+                ;;
+            [Nn])
+                interactive_config
+                ;;
+            *)
+                source "$CONFIG_FILE"
+                export_config_vars
+                echo -e "${GREEN}✓ Configuración cargada${NC}"
+                ;;
+        esac
+    else
+        echo -e "${YELLOW}No se encontró archivo de configuración${NC}"
+        echo ""
+        echo "Opciones:"
+        echo "  1) Configuración interactiva (recomendado)"
+        echo "  2) Crear config.env por defecto"
+        echo ""
+        read -p "Selecciona opción (1-2) [1]: " config_choice
+        
+        if [ "${config_choice:-1}" = "2" ]; then
+            UBUNTU_VERSION="noble"
+            HOSTNAME="ubuntu"
+            USERNAME="user"
+            IS_LAPTOP="true"
+            HAS_WIFI="true"
+            HAS_BLUETOOTH="true"
+            ENABLE_SECURITY="true"
+            MINIMIZE_SYSTEMD="true"
+            INSTALL_GNOME="true"
+            INSTALL_MULTIMEDIA="true"
+            INSTALL_DEVELOPMENT="false"
+            INSTALL_GAMING="false"
+            INSTALL_PROTONPLUS="false"
+            INSTALL_DISCORD="n"
+            INSTALL_UNIGINE="n"
+            INSTALL_ONLYOFFICE="n"
+            INSTALL_AMULE="n"
+            INSTALL_MULLVAD="n"
+            
+            save_config
+            export_config_vars
+            echo "Edita $CONFIG_FILE y ejecuta de nuevo"
+            exit 0
+        else
+            interactive_config
+        fi
+    fi
+
+    # Validar siempre después de cargar
+    validate_config || exit 1
+}
+
+##############################################################################
+# FUNCIONES AUXILIARES
+##############################################################################
+
+run_module() {
+    local module_name="$1"
+    local module_label="${2:-$module_name}"
+    local module_num="${3:-}"
+    local module_total="${4:-}"
+    local module_path="$MODULES_DIR/$module_name.sh"
+
+    if [ ! -f "$module_path" ]; then
+        log_error "Módulo no encontrado: $module_name"
+        return 1
+    fi
+
+    local module_log="$LOG_DIR/${module_name}.log"
+    local start_ts=$SECONDS
+
+    # Exportar contexto para módulos
+    export LOG_FILE
+    export LANG=C.UTF-8
+    export LC_ALL=C.UTF-8
+
+    # Calcular progreso
+    local bar_text="$module_label"
+    local start_pct=0 end_pct=100
+    if [ -n "$module_num" ] && [ -n "$module_total" ]; then
+        bar_text="[$module_num/$module_total] $module_label"
+        start_pct=$(( (module_num - 1) * 100 / module_total ))
+        end_pct=$(( module_num * 100 / module_total ))
+    fi
+
+    # ── Ejecutar módulo ────────────────────────────────────────────────────────
+    # Módulos interactivos (con reads de usuario) se ejecutan sin barra
+    # para que los prompts y la selección de disco funcionen bien.
+    local exit_code=0
+
+    case "$module_name" in
+        01-prepare-disk|9[0-9]-*)
+            # Sin barra — módulos interactivos o post-instalación
+            if [ "$VERBOSE_MODE" = "true" ]; then
+                bash -x "$module_path" 2>&1 | tee -a "$module_log" || exit_code=${PIPESTATUS[0]}
+            else
+                bash "$module_path" 2>&1 | tee -a "$module_log" || exit_code=${PIPESTATUS[0]}
+            fi
+            ;;
+        *)
+            # Con barra fija al fondo
+            run_module_with_bar "$module_path" "$module_log" "$bar_text" "$start_pct" "$end_pct" "$VERBOSE_MODE" \
+                || exit_code=$?
+            ;;
+    esac
+
+    # Append al log principal también
+    cat "$module_log" >> "$LOG_FILE" 2>/dev/null || true
+
+    local elapsed=$(( SECONDS - start_ts ))
+    local status="OK"
+    [ $exit_code -ne 0 ] && status="FAILED (code: $exit_code)"
+    echo "$(date '+%H:%M:%S') [$module_name] $status (${elapsed}s)" >> "$LOG_DIR/module-summary.log"
+
+    if [ $exit_code -eq 0 ]; then
+        log_success "Módulo completado: $module_name (${elapsed}s)"
+        return 0
+    else
+        log_error "Módulo falló: $module_name (exit code: $exit_code, ${elapsed}s)"
+        return 1
+    fi
+}
+
+##############################################################################
+# MENÚ PRINCIPAL
+##############################################################################
+
+show_menu() {
+    clear
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  MENÚ AVANZADO — Módulos individuales y utilidades        ║${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        export_config_vars
+        echo -e "  ${DIM}Config: Ubuntu $UBUNTU_VERSION · $HOSTNAME · $USERNAME${NC}"
+        echo ""
+    fi
+
+    echo -e "${YELLOW}INSTALACIÓN:${NC}"
+    echo "  i) Interactiva    a) Automática    c) Solo configurar"
+    echo ""
+
+    # Listar módulos disponibles agrupados por prefijo
+    echo -e "${YELLOW}BASE (0x):${NC}"
+    echo "  00) check-dependencies     04) install-bootloader"
+    echo "  01) prepare-disk           05) configure-network"
+    echo "  02) debootstrap            06) configure-auto-updates"
+    echo "  03) configure-base"
+    echo ""
+    echo -e "${YELLOW}GNOME (1x):${NC}"
+    echo "  10) install-gnome-core     12) optimize-gnome"
+    echo "  11) configure-gnome-user   13) configure-gnome-theme"
+    echo ""
+    echo -e "${YELLOW}SOFTWARE (2x):${NC}"
+    echo "  20) install-multimedia     23) install-development"
+    echo "  21) install-fonts          24) configure-gaming"
+    echo "  22) configure-wireless"
+    echo ""
+    echo -e "${YELLOW}OPTIMIZACIÓN (3x):${NC}"
+    echo "  30) configure-storage      33) minimize-systemd"
+    echo "  31) configure-audio        34) security-hardening"
+    echo "  32) optimize-laptop"
+    echo ""
+    echo -e "${YELLOW}POST-INSTALACIÓN (9x):${NC}"
+    echo "  90) verify-system          92) backup-config"
+    echo "  91) generate-report"
+    echo ""
+    echo "   q) Salir"
+    echo ""
+    read -p "Módulo [número]: " choice
+    echo ""
+
+    # Resolver: el usuario escribe el número de prefijo del módulo
+    local mod_file
+    mod_file=$(ls "$MODULES_DIR"/${choice}-*.sh 2>/dev/null | head -1)
+
+    case $choice in
+        i) full_interactive_install ;;
+        a) full_automatic_install ;;
+        c) interactive_config ;;
+        q|0) exit 0 ;;
+        *)
+            if [ -n "$mod_file" ]; then
+                run_module "$(basename "$mod_file" .sh)"
+            else
+                log_error "Módulo $choice no encontrado"
+                sleep 1
+            fi
+            ;;
+    esac
+
+    echo ""
+    read -p "Presiona Enter para continuar..."
+}
+
+##############################################################################
+# CONSTRUCCIÓN DE LA LISTA DE MÓDULOS (compartida por ambos modos)
+##############################################################################
+
+build_module_list() {
+    MODULES_TO_RUN=()
+    MODULES_LABELS=()
+    MODULES_REQUIRED=()
+
+    # ── CORE ──────────────────────────────────────────────────────────────────
+    MODULES_TO_RUN+=("01-prepare-disk");      MODULES_LABELS+=("Preparar disco");         MODULES_REQUIRED+=("1")
+    MODULES_TO_RUN+=("02-debootstrap");       MODULES_LABELS+=("Sistema base Ubuntu");    MODULES_REQUIRED+=("1")
+    MODULES_TO_RUN+=("03-configure-base");    MODULES_LABELS+=("Configuración base");     MODULES_REQUIRED+=("1")
+    MODULES_TO_RUN+=("04-install-bootloader"); MODULES_LABELS+=("Bootloader GRUB");       MODULES_REQUIRED+=("1")
+    MODULES_TO_RUN+=("05-configure-network"); MODULES_LABELS+=("Red y NetworkManager");   MODULES_REQUIRED+=("1")
+    MODULES_TO_RUN+=("06-configure-auto-updates"); MODULES_LABELS+=("Actualizaciones automáticas"); MODULES_REQUIRED+=("1")
+    MODULES_TO_RUN+=("30-configure-storage");      MODULES_LABELS+=("Almacenamiento y swapfile");       MODULES_REQUIRED+=("1")
+    MODULES_TO_RUN+=("31-configure-audio");        MODULES_LABELS+=("Audio plug and play");             MODULES_REQUIRED+=("1")
+
+    # ── GNOME ─────────────────────────────────────────────────────────────────
+    if [ "${INSTALL_GNOME:-false}" = "true" ]; then
+        MODULES_TO_RUN+=("10-install-gnome-core"); MODULES_LABELS+=("GNOME — entorno gráfico");     MODULES_REQUIRED+=("1")
+        MODULES_TO_RUN+=("11-configure-gnome-user");        MODULES_LABELS+=("GNOME — configuración visual"); MODULES_REQUIRED+=("1")
+        [ "${GNOME_OPTIMIZE_MEMORY:-false}" = "true" ] && {
+            MODULES_TO_RUN+=("12-optimize-gnome"); MODULES_LABELS+=("GNOME — optimización de memoria"); MODULES_REQUIRED+=("0")
+        }
+        [ "${GNOME_TRANSPARENT_THEME:-false}" = "true" ] && {
+            MODULES_TO_RUN+=("13-configure-gnome-theme"); MODULES_LABELS+=("GNOME — tema transparente"); MODULES_REQUIRED+=("0")
+        }
+    fi
+
+    # ── EXTRA ─────────────────────────────────────────────────────────────────
+    MODULES_TO_RUN+=("21-install-fonts"); MODULES_LABELS+=("Fuentes tipográficas"); MODULES_REQUIRED+=("1")
+
+    [ "${INSTALL_MULTIMEDIA:-false}" = "true" ] && {
+        MODULES_TO_RUN+=("20-install-multimedia"); MODULES_LABELS+=("Multimedia — códecs y reproductores"); MODULES_REQUIRED+=("0")
+    }
+    [ "${HAS_WIFI:-false}" = "true" ] || [ "${HAS_BLUETOOTH:-false}" = "true" ] && {
+        MODULES_TO_RUN+=("22-configure-wireless"); MODULES_LABELS+=("WiFi y Bluetooth"); MODULES_REQUIRED+=("0")
+    }
+    [ "${INSTALL_DEVELOPMENT:-false}" = "true" ] && {
+        MODULES_TO_RUN+=("23-install-development"); MODULES_LABELS+=("Herramientas de desarrollo"); MODULES_REQUIRED+=("0")
+    }
+    [ "${INSTALL_GAMING:-false}" = "true" ] && {
+        MODULES_TO_RUN+=("24-configure-gaming"); MODULES_LABELS+=("Gaming — Steam, Heroic, Proton"); MODULES_REQUIRED+=("0")
+    }
+    # Módulo 25 se ejecuta si hay cualquier extra activado
+    _needs_extras=false
+    [[ "${INSTALL_ONLYOFFICE:-n}" =~ ^[SsYy]$ ]] && _needs_extras=true
+    [[ "${INSTALL_AMULE:-n}" =~ ^[SsYy]$ ]] && _needs_extras=true
+    [[ "${INSTALL_MULLVAD:-n}" =~ ^[SsYy]$ ]] && _needs_extras=true
+    [[ "${INSTALL_OBS:-n}" =~ ^[SsYy]$ ]] && _needs_extras=true
+    [[ "${INSTALL_OBSIDIAN:-n}" =~ ^[SsYy]$ ]] && _needs_extras=true
+    [ "${INSTALL_STREAMING_WEBAPPS:-false}" = "true" ] && _needs_extras=true
+    [ "${INSTALL_SYS_MANAGERS:-false}" = "true" ] && _needs_extras=true
+    [ "$_needs_extras" = "true" ] && {
+        MODULES_TO_RUN+=("25-install-extras"); MODULES_LABELS+=("Apps extras"); MODULES_REQUIRED+=("0")
+    }
+    [ "${IS_LAPTOP:-false}" = "true" ] && {
+        MODULES_TO_RUN+=("32-optimize-laptop"); MODULES_LABELS+=("Optimización laptop (TLP)"); MODULES_REQUIRED+=("0")
+    }
+    [ "${MINIMIZE_SYSTEMD:-false}" = "true" ] && {
+        MODULES_TO_RUN+=("33-minimize-systemd"); MODULES_LABELS+=("Minimizar systemd"); MODULES_REQUIRED+=("0")
+    }
+    [ "${ENABLE_SECURITY:-false}" = "true" ] && {
+        MODULES_TO_RUN+=("34-security-hardening"); MODULES_LABELS+=("Hardening de seguridad"); MODULES_REQUIRED+=("0")
+    }
+}
+
+##############################################################################
+# EJECUTAR MÓDULOS (compartido por ambos modos)
+##############################################################################
+
+# $1 = "interactive" o "automatic"
+run_all_modules() {
+    local mode="${1:-interactive}"
+    local total=${#MODULES_TO_RUN[@]}
+    local start_time=$SECONDS
+    local modules_ok=0
+    local modules_failed=0
+    local modules_skipped=0
+
+    for i in "${!MODULES_TO_RUN[@]}"; do
+        local mod="${MODULES_TO_RUN[$i]}"
+        local label="${MODULES_LABELS[$i]}"
+        local req="${MODULES_REQUIRED[$i]}"
+        local num=$(( i + 1 ))
+        local badge
+        [ "$req" = "1" ] && badge="${GREEN}[CORE]${NC}" || badge="${CYAN}[EXTRA]${NC}"
+
+        echo ""
+        echo -e "${BOLD}${CYAN}────────────────────────────────────────────────────────────────${NC}"
+        printf "${BOLD}  %2d/%d  %s${NC}  " "$num" "$total" "$label"
+        echo -e "$badge"
+        echo -e "${BOLD}${CYAN}────────────────────────────────────────────────────────────────${NC}"
+        echo ""
+
+        local exit_code=0
+        run_module "$mod" "$label" "$num" "$total" || exit_code=$?
+
+        if [ "$exit_code" -eq 0 ]; then
+            modules_ok=$(( modules_ok + 1 ))
+        else
+            modules_failed=$(( modules_failed + 1 ))
+            if [ "$req" = "1" ]; then
+                echo ""
+                echo -e "${RED}✗  Módulo CORE fallido: $label${NC}"
+                if [ "$mode" = "interactive" ]; then
+                    read -p "  ¿Continuar de todas formas? (s/n) [n]: " cont
+                    if [[ ! ${cont:-n} =~ ^[SsYy]$ ]]; then
+                        echo "Instalación interrumpida en módulo $num/$total"
+                        return 1
+                    fi
+                else
+                    echo "Instalación automática abortada: módulo CORE falló"
+                    return 1
+                fi
+            else
+                echo -e "${YELLOW}⚠  Módulo EXTRA fallido, continuando: $label${NC}"
+            fi
+        fi
+    done
+
+    # ── Sumario ───────────────────────────────────────────────────────────────
+    local elapsed=$(( SECONDS - start_time ))
+    local elapsed_min=$(( elapsed / 60 ))
+    local elapsed_sec=$(( elapsed % 60 ))
+
+    echo ""
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${CYAN}  INSTALACIÓN COMPLETADA — ubuntu-advanced-install $VERSION${NC}"
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Estado de módulos
+    echo -e "  ${BOLD}Módulos${NC}"
+    echo -e "  ${GREEN}✓${NC} $modules_ok completados"
+    [ $modules_failed -gt 0 ] && echo -e "  ${RED}✗${NC} $modules_failed con errores"
+    [ $modules_skipped -gt 0 ] && echo -e "  ${DIM}· $modules_skipped omitidos${NC}"
+    echo ""
+
+    # Sistema base
+    echo -e "  ${BOLD}Sistema base${NC}"
+    echo "    Ubuntu ${UBUNTU_VERSION:-24.04} · ${HOSTNAME:-ubuntu}"
+    echo "    Usuario: ${USERNAME:-user} · Disco: ${TARGET_DISK:-/dev/vda}"
+    local kparams_label="base"
+    case "${KERNEL_PARAMS_LEVEL:-1}" in
+        2) kparams_label="base + gaming" ;;
+        3) kparams_label="base + gaming + mitigations=off" ;;
+        4) kparams_label="mínimo" ;;
+    esac
+    echo "    Parámetros kernel: $kparams_label"
+    echo ""
+
+    # GNOME
+    if [ "${INSTALL_GNOME:-false}" = "true" ]; then
+        echo -e "  ${BOLD}GNOME${NC}"
+        echo "    Dock: ${GNOME_DOCK:-ubuntu-dock} · Autologin: ${GDM_AUTOLOGIN:-false}"
+        echo "    Extensiones: blur-my-shell, alphabetical-app-grid, caffeine,"
+        echo "                 no-overview, no-screenshot-box"
+        echo ""
+    fi
+
+    # Software
+    local sw_items=""
+    [ "${INSTALL_MULTIMEDIA:-false}" = "true" ] && sw_items="${sw_items}Multimedia "
+    [ "${INSTALL_DEVELOPMENT:-false}" = "true" ] && sw_items="${sw_items}Desarrollo "
+    [ "${INSTALL_GAMING:-false}" = "true" ] && sw_items="${sw_items}Gaming "
+    if [ -n "$sw_items" ]; then
+        echo -e "  ${BOLD}Software${NC}"
+        echo "    $sw_items"
+        [ "${INSTALL_GAMING:-false}" = "true" ] && {
+            echo "    Gaming: Steam, Heroic, Faugus, MangoHud, MangoJuice"
+            [ "${INSTALL_CACHYOS_KERNEL:-false}" = "true" ] && {
+                case "${CACHYOS_SCHEDULER:-1}" in
+                    1) _sch="BORE" ;; 2) _sch="BORE+sched-ext" ;; 3) _sch="EEVDF" ;; 4) _sch="CFS compat" ;; *) _sch="BORE" ;;
+                esac
+                echo "    Kernel CachyOS ($_sch)"
+            }
+            [ "${INSTALL_FALCOND:-false}" = "true" ] && echo "    Falcond (auto-optimización gaming)"
+            [ "${INSTALL_OPTISCALER:-false}" = "true" ] && echo "    OptiScaler (FSR4/DLSS/XeSS)"
+        }
+        echo ""
+    fi
+
+    # Extras
+    local extras=""
+    [[ "${INSTALL_ONLYOFFICE:-n}" =~ ^[SsYy]$ ]] && extras="${extras}OnlyOffice "
+    [[ "${INSTALL_AMULE:-n}" =~ ^[SsYy]$ ]] && extras="${extras}aMule "
+    [[ "${INSTALL_MULLVAD:-n}" =~ ^[SsYy]$ ]] && extras="${extras}Mullvad "
+    [ "${INSTALL_STREAMING_WEBAPPS:-false}" = "true" ] && extras="${extras}Webapps "
+    [ "${INSTALL_SYS_MANAGERS:-false}" = "true" ] && extras="${extras}kernel-manager+firmware-manager "
+    if [ -n "$extras" ]; then
+        echo -e "  ${BOLD}Extras${NC}"
+        echo "    $extras"
+        echo ""
+    fi
+
+    # Warnings
+    if [ $modules_failed -gt 0 ]; then
+        echo -e "  ${YELLOW}⚠  Algunos módulos fallaron. Revisa el log para detalles.${NC}"
+        echo ""
+    fi
+
+    # Pie
+    printf "  Tiempo total: %dm %02ds\n" "$elapsed_min" "$elapsed_sec"
+    echo -e "  Log: ${DIM}$LOG_FILE${NC}"
+    echo ""
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "  ${BOLD}Reinicia para completar la configuración.${NC}"
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    log_success "Instalación completada"
+}
+
+##############################################################################
+# LIMPIEZA POST-INSTALACIÓN
+##############################################################################
+
+cleanup_config() {
+    [ ! -f "$CONFIG_FILE" ] && return
+
+    if [ "${1:-}" = "auto" ]; then
+        rm -f "$CONFIG_FILE"
+        echo -e "${GREEN}✓  config.env eliminado${NC}"
+    else
+        echo ""
+        read -p "  ¿Eliminar config.env? (s/n) [s]: " del_conf
+        if [[ ${del_conf:-s} =~ ^[SsYy]$ ]]; then
+            rm -f "$CONFIG_FILE"
+            echo -e "${GREEN}✓  config.env eliminado${NC}"
+        else
+            echo "  config.env conservado en: $CONFIG_FILE"
+        fi
+    fi
+}
+
+##############################################################################
+# INSTALACIÓN AUTOMÁTICA (sin preguntas durante ejecución)
+##############################################################################
+
+full_automatic_install() {
+    check_root
+    load_or_create_config
+    
+    log_step "INSTALACIÓN AUTOMÁTICA COMPLETA"
+    
+    echo -e "${GREEN}Verificando dependencias del sistema...${NC}"
+    local dep_log="$LOG_DIR/00-check-dependencies.log"
+    if bash "$MODULES_DIR/00-check-dependencies.sh" > "$dep_log" 2>&1; then
+        echo -e "♦  Dependencias instaladas"
+    else
+        log_error "Error al verificar dependencias (ver $dep_log)"
+        exit 1
+    fi
+    cat "$dep_log" >> "$LOG_FILE" 2>/dev/null || true
+
+    build_module_list
+    run_all_modules "automatic" || exit 1
+
+    run_module "90-verify-system" "Verificación post-instalación"
+    run_module "91-generate-report" "Generando informe"
+    cleanup_config "auto"
+    post_install_menu
+}
+
+##############################################################################
+# INSTALACIÓN INTERACTIVA
+##############################################################################
+
+full_interactive_install() {
+    check_root
+    load_or_create_config
+    
+    log_step "INSTALACIÓN INTERACTIVA"
+    
+    # ============================================================================
+    # INFORMACIÓN DE HARDWARE (solo informativa — no sobreescribe config)
+    # ============================================================================
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "  HARDWARE DETECTADO"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    
+    # CPU
+    CPU_MODEL=$(grep "model name" /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | xargs) || true
+    echo "  CPU:  ${CPU_MODEL:-desconocida} ($(nproc) cores)"
+    
+    # RAM
+    RAM_MB=$(free -m | awk '/^Mem:/{print $2}')
+    echo "  RAM:  ${RAM_MB}MB"
+    
+    # GPU
+    GPU_INFO=$(lspci 2>/dev/null | grep -i "vga\|3d\|display" | head -2 | sed 's/^/  GPU:  /') || true
+    [ -n "$GPU_INFO" ] && echo "$GPU_INFO" || echo "  GPU:  no detectada (VM sin lspci?)"
+    
+    # Firmware
+    [ -d /sys/firmware/efi ] && echo "  Boot: UEFI" || echo "  Boot: BIOS/Legacy"
+    
+    echo ""
+    echo "  Config: $([ "$IS_LAPTOP" = "true" ] && echo "Laptop" || echo "Desktop") · WiFi: $HAS_WIFI · BT: $HAS_BLUETOOTH"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    
+    # ── Dependencias ────────────────────────────────────────────────────────
+    echo -e "${GREEN}Verificando dependencias del sistema...${NC}"
+    local dep_log="$LOG_DIR/00-check-dependencies.log"
+    if bash "$MODULES_DIR/00-check-dependencies.sh" > "$dep_log" 2>&1; then
+        echo -e "♦  Dependencias instaladas"
+    else
+        log_error "Error al verificar dependencias (ver $dep_log)"
+        exit 1
+    fi
+    cat "$dep_log" >> "$LOG_FILE" 2>/dev/null || true
+    echo ""
+
+    # ── Construir y mostrar plan de instalación ──────────────────────────────
+    build_module_list
+
+    local total=${#MODULES_TO_RUN[@]}
+    local core_count=0
+    local extra_count=0
+    for req in "${MODULES_REQUIRED[@]}"; do
+        [ "$req" = "1" ] && core_count=$(( core_count + 1 )) || extra_count=$(( extra_count + 1 ))
+    done
+
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${CYAN}  PLAN DE INSTALACIÓN — $total módulos${NC}"
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    local prev_section=""
+    for i in "${!MODULES_TO_RUN[@]}"; do
+        local mod="${MODULES_TO_RUN[$i]}"
+        local label="${MODULES_LABELS[$i]}"
+        local req="${MODULES_REQUIRED[$i]}"
+
+        if [ "$req" = "1" ] && [ "$prev_section" != "core" ]; then
+            echo -e "  ${BOLD}CORE${NC} ${DIM}— siempre se ejecutan${NC}"
+            prev_section="core"
+        elif [ "$req" = "0" ] && [ "$prev_section" != "extra" ]; then
+            echo ""
+            echo -e "  ${BOLD}EXTRA${NC} ${DIM}— según tu configuración${NC}"
+            prev_section="extra"
+        fi
+
+        printf "  %2d. %-42s" "$(( i + 1 ))" "$label"
+        [ "$req" = "1" ] && echo -e "${GREEN}[CORE]${NC}" || echo -e "${CYAN}[EXTRA]${NC}"
+    done
+
+    echo ""
+    echo -e "  ${GREEN}$core_count CORE${NC}  +  ${CYAN}$extra_count EXTRA${NC}  =  ${BOLD}$total total${NC}"
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    read -p "¿Continuar con la instalación? (s/n) [s]: " proceed
+    if [[ ! ${proceed:-s} =~ ^[SsYy]$ ]]; then
+        echo "Instalación cancelada"
+        return
+    fi
+
+    # ── Ejecutar ─────────────────────────────────────────────────────────────
+    run_all_modules "interactive" || return 1
+
+    run_module "90-verify-system" "Verificación post-instalación"
+    run_module "91-generate-report" "Generando informe"
+    cleanup_config
+    post_install_menu
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# post_install_menu — opciones finales tras completar la instalación
+# ─────────────────────────────────────────────────────────────────────────────
+post_install_menu() {
+    # Asegurar que read usa el terminal real, no un pipe agotado
+    # Si stdin no es un terminal (ej. pipe, heredoc agotado), read devuelve
+    # EOF instantáneamente → el default "3" dispara reboot en bucle infinito.
+    if [ ! -t 0 ]; then
+        echo ""
+        echo -e "${YELLOW}stdin no es un terminal — reiniciando automáticamente en 10s${NC}"
+        echo -e "${YELLOW}(Ctrl+C para cancelar)${NC}"
+        sleep 10
+        _do_reboot
+        return 0
+    fi
+
+    while true; do
+        echo ""
+        echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${BOLD}${CYAN}  ¿QUÉ DESEAS HACER AHORA?${NC}"
+        echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo "  1) Generar informe del sistema instalado"
+        echo "  2) Hacer backup de la configuración"
+        echo "  3) Reiniciar y arrancar Ubuntu"
+        echo "  4) Salir sin reiniciar"
+        echo ""
+        # read devuelve !=0 en EOF → salir del bucle
+        read -p "Selecciona opción [3]: " post_choice || { post_choice=3; break; }
+        post_choice=${post_choice:-3}
+        echo ""
+
+        case $post_choice in
+            1)
+                run_module "91-generate-report" "Generando informe"
+                ;;
+            2)
+                run_module "92-backup-config" "Respaldo de configuración"
+                ;;
+            3)
+                _do_reboot
+                return 0
+                ;;
+            4)
+                echo -e "${YELLOW}⚠  Sistema instalado pero NO reiniciado.${NC}"
+                echo -e "${YELLOW}   Recuerda desmontar manualmente antes de apagar:${NC}"
+                echo -e "${DIM}   umount -R \"${TARGET:-/mnt/ubuntu}\" && reboot${NC}"
+                echo ""
+                return 0
+                ;;
+            *)
+                echo -e "${RED}Opción inválida${NC}"
+                ;;
+        esac
+    done
+
+    # Si llegamos aquí por EOF + break con opción 3
+    if [ "$post_choice" = "3" ]; then
+        _do_reboot
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _do_reboot — desmonta el chroot limpiamente y reinicia
+# ─────────────────────────────────────────────────────────────────────────────
+_do_reboot() {
+    local target="${TARGET:-/mnt/ubuntu}"
+
+    echo -e "${CYAN}Preparando el sistema para reiniciar...${NC}"
+    echo ""
+
+    # 1. Terminar procesos que aún usen el chroot
+    echo -n "  Cerrando procesos en $target... "
+    fuser -km "$target" 2>/dev/null || true
+    sleep 1
+    echo -e "${GREEN}✓${NC}"
+
+    # 2. Desmontar en orden inverso (los más anidados primero)
+    #    arch-chroot normalmente limpia tras sí, pero si algún mount persiste
+    #    (ej. el usuario ejecutó módulos individualmente), limpiamos todo.
+    local mounts=(
+        "$target/tmp"
+        "$target/run"
+        "$target/dev/shm"
+        "$target/dev/pts"
+        "$target/dev"
+        "$target/sys/firmware/efi/efivars"
+        "$target/sys"
+        "$target/proc"
+        "$target/boot/efi"
+        "$target"
+    )
+
+    echo "  Desmontando sistemas de ficheros..."
+    for mnt in "${mounts[@]}"; do
+        if mountpoint -q "$mnt" 2>/dev/null; then
+            umount -l "$mnt" 2>/dev/null && \
+                echo -e "    ${GREEN}✓${NC}  $mnt" || \
+                echo -e "    ${YELLOW}⚠${NC}  $mnt (no se pudo desmontar, continuando)"
+        fi
+    done
+
+    # 3. Sincronizar buffers
+    echo -n "  Sincronizando disco... "
+    sync
+    echo -e "${GREEN}✓${NC}"
+
+    echo ""
+    echo -e "${GREEN}✓  Sistema desmontado correctamente${NC}"
+    echo ""
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${BOLD}${CYAN}  REINICIANDO — retira el medio de instalación${NC}"
+    echo -e "${BOLD}${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+
+    sleep 3
+    reboot || true
+    # Si reboot no terminó el proceso inmediatamente (ej. VM), forzar salida
+    sleep 5
+    reboot -f 2>/dev/null || true
+    exit 0
+}
+
+##############################################################################
+# MAIN
+##############################################################################
+
+check_root
+
+# Parsear argumentos
+case "${1:-}" in
+    --auto|-a)
+        full_automatic_install
+        ;;
+    --interactive|-i)
+        full_interactive_install
+        ;;
+    --config|-c)
+        interactive_config
+        ;;
+    --module|-m)
+        [ -z "${2:-}" ] && { log_error "Especifica módulo: $0 --module NOMBRE"; exit 1; }
+        source "$CONFIG_FILE" 2>/dev/null || true
+        export_config_vars
+        run_module "$2"
+        ;;
+    --list|-l)
+        echo "ubuntu-advanced-install v${VERSION} — Módulos disponibles:"
+        echo ""
+        prev_group=""
+        for f in "$MODULES_DIR"/[0-9]*.sh; do
+            name=$(basename "$f" .sh)
+            prefix=${name%%-*}
+            case $prefix in
+                0[0-9]) group="BASE" ;;
+                1[0-9]) group="GNOME" ;;
+                2[0-9]) group="SOFTWARE" ;;
+                3[0-9]) group="OPTIMIZACIÓN" ;;
+                9[0-9]) group="POST-INSTALACIÓN" ;;
+                *)      group="OTRO" ;;
+            esac
+            if [ "$group" != "$prev_group" ]; then
+                [ -n "$prev_group" ] && echo ""
+                echo "  $group:"
+                prev_group="$group"
+            fi
+            printf "    %-40s %s\n" "$name" "$(head -2 "$f" | grep '^# ' | head -1 | sed 's/^# //')"
+        done
+        echo ""
+        ;;
+    --verbose|-v)
+        VERBOSE_MODE=true
+        export VERBOSE_MODE
+        full_interactive_install
+        ;;
+    --debug)
+        VERBOSE_MODE=true
+        export VERBOSE_MODE
+        set -x
+        full_interactive_install
+        ;;
+    --help|-h)
+        cat << HELPEOF
+ubuntu-advanced-install v${VERSION}
+Instalador modular de Ubuntu con debootstrap
+
+Uso: sudo ./install.sh [opción]
+
+MODOS DE INSTALACIÓN:
+  (sin args)          Instalación interactiva guiada (recomendado)
+  --auto,    -a       Instalación automática (requiere config.env)
+  --verbose, -v       Interactiva con verbose
+  --debug             Interactiva con bash -x
+
+CONFIGURACIÓN:
+  --config,  -c       Generar config.env interactivamente
+  --validate          Validar config.env sin instalar
+
+MÓDULOS:
+  --module,  -m NAME  Ejecutar un módulo individual
+  --list,    -l       Listar módulos disponibles
+  --menu              Menú interactivo de módulos
+
+AYUDA:
+  --help,    -h       Esta ayuda
+  --version           Mostrar versión
+
+Estructura de módulos:
+  0x = Base (disco, debootstrap, red)
+  1x = GNOME (escritorio, tema, optimización)
+  2x = Software (multimedia, dev, gaming)
+  3x = Optimización (storage, audio, laptop, systemd)
+  9x = Post-instalación (verify, report, backup)
+
+Config de ejemplo: config.env.example
+Documentación:      docs/README.md
+HELPEOF
+        ;;
+    --version)
+        echo "ubuntu-advanced-install v${VERSION}"
+        ;;
+    --validate)
+        source "$CONFIG_FILE" 2>/dev/null || { log_error "No se encontró config.env"; exit 1; }
+        export_config_vars
+        validate_config
+        ;;
+    --menu)
+        while true; do show_menu; done
+        ;;
+    "")
+        # Sin argumentos: instalación interactiva (flujo principal)
+        full_interactive_install
+        ;;
+    *)
+        log_error "Opción desconocida: $1 (usa --help)"
+        exit 1
+        ;;
+esac
