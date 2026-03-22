@@ -1,0 +1,96 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# ubuntu-advanced-install — config.yaml
+#
+# Archivo de configuración declarativo para instalación automatizada.
+#
+# Uso:
+#   cp config.yaml.example config.yaml
+#   nano config.yaml
+#   sudo ./install.sh --auto config.yaml
+#
+# Las contraseñas NO se almacenan aquí.
+# Se piden interactivamente durante la instalación.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Sistema base ─────────────────────────────────────────────────────────────
+system:
+  ubuntu_version: "noble"         # noble | questing | resolute
+  target_disk: "/dev/vda"         # /dev/sda, /dev/nvme0n1, etc.
+  target_mount: "/mnt/ubuntu"
+  hostname: "ubuntu"
+  username: "antonio"
+  is_laptop: false
+  dual_boot: false
+  dual_boot_size_gb: 50           # Solo si dual_boot: true
+
+# ── Escritorio GNOME ─────────────────────────────────────────────────────────
+gnome:
+  enabled: true                   # false = modo servidor headless
+  dock: "dash-to-panel"           # ubuntu-dock | dash-to-panel
+  autologin: true
+  optimize_memory: true
+  transparent_theme: true
+
+# ── Multimedia ───────────────────────────────────────────────────────────────
+multimedia:
+  enabled: true
+  spotify: true
+
+# ── Desarrollo ───────────────────────────────────────────────────────────────
+development:
+  enabled: false
+  vscode: true
+  nodejs: "lts"                   # none | lts
+  rust: false
+  topgrade: true
+  gnome_boxes: false
+  lazy_tools: false               # lazygit + lazydocker + LazyVim
+  bun: false
+  deno: false
+  docker_tools: false             # unregistry + docker-pussh + uncloud
+  meld: false
+  postman: false
+  nettools: false              # Wireshark, nmap, AWS CLI v2, httpie, jq
+
+# ── Gaming ───────────────────────────────────────────────────────────────────
+gaming:
+  enabled: false
+  gpu: "auto"                     # auto | amd | intel | nvidia |
+                                  # intel+nvidia | intel+amd | amd+amd | amd+nvidia | vm
+  protonplus: false
+  kernel_psycachy: false
+  psycachy_scheduler: "bore"      # bore | eevdf
+  falcond: false
+  optiscaler: false
+  discord: false
+
+# ── Extras ───────────────────────────────────────────────────────────────────
+extras:
+  onlyoffice: false
+  qbittorrent: false
+  mullvad_vpn: false
+  obs_studio: false
+  obsidian: false
+  streaming_webapps: false        # Netflix, HBO, Disney+, etc.
+  sys_managers: false             # AM, topgrade CLI tools
+
+# ── Optimizaciones del sistema ───────────────────────────────────────────────
+system_tuning:
+  minimize_systemd: true
+  security_hardening: false       # UFW + sysctl + lockdown (puede romper NVIDIA DKMS)
+  auto_updates: "security"        # security | all | none
+  kernel_params: 1                # 1=Base | 2=Gaming | 3=Inseguro | 4=Mínimo
+
+# ── Optimizaciones de rendimiento (testear individualmente) ──────────────
+# Cada opción puede activarse por separado para medir su impacto.
+# Recomendado: activar una por una y comparar rendimiento/estabilidad.
+performance:
+  zram: true                      # Swap en RAM comprimida (reemplaza swapfile)
+  zram_swappiness: 180            # 180 para zram (kernel 5.8+), 10 para disco
+  oomd_aggressive: true           # systemd-oomd thresholds agresivos (CachyOS)
+  tmpfiles_cleanup: true          # Limpieza automática de /tmp, cachés, journal
+  dns_over_tls: true              # systemd-resolved con DNS-over-TLS
+
+# ── Laptop (solo si is_laptop: true) ─────────────────────────────────────────
+laptop:
+  power_manager: "ppd"            # ppd (power-profiles-daemon) | tlp
