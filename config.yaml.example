@@ -1,0 +1,93 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# ubuntu-advanced-install — config.yaml
+#
+# Archivo de configuración declarativo para instalación automatizada.
+#
+# Uso:
+#   cp config.yaml.example config.yaml
+#   nano config.yaml
+#   sudo ./install.sh --auto
+#
+# Contraseñas: opcionales. Si se incluyen, la instalación es totalmente
+# desatendida. Si se omiten, se piden al arrancar --auto.
+# ¡Permisos 600 recomendados si se almacenan contraseñas!
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Sistema base ─────────────────────────────────────────────────────────────
+system:
+  ubuntu_version: "noble"         # noble | questing | resolute
+  target_disk: "/dev/vda"         # /dev/sda, /dev/nvme0n1, etc.
+  target_mount: "/mnt/ubuntu"
+  hostname: "ubuntu"
+  username: "antonio"
+  # user_password: "CAMBIA_ESTO"   # Opcional — si se omite se pide en --auto
+  # root_password: "CAMBIA_ESTO"   # Opcional — si se omite = misma que user
+  is_laptop: false
+  dual_boot: false
+  dual_boot_size_gb: 50           # Solo si dual_boot: true
+
+# ── Escritorio GNOME ─────────────────────────────────────────────────────────
+gnome:
+  enabled: true                   # false = modo servidor headless
+  dock: "dash-to-panel"           # ubuntu-dock | dash-to-panel
+  autologin: true
+  optimize_memory: true
+  transparent_theme: true
+
+# ── Multimedia ───────────────────────────────────────────────────────────────
+multimedia:
+  enabled: true
+  spotify: true
+
+# ── Desarrollo ───────────────────────────────────────────────────────────────
+development:
+  enabled: false
+  vscode: true
+  nodejs: "lts"                   # none | lts
+  topgrade: true
+  gnome_boxes: false
+  lazy_tools: false               # lazygit + lazydocker + LazyVim
+  docker_tools: false             # unregistry + docker-pussh + uncloud
+  n8n: false                      # automatización de workflows (npm)
+  meld: false
+  postman: false
+  nettools: false              # Wireshark, nmap, AWS CLI v2, httpie, jq
+
+# ── Gaming ───────────────────────────────────────────────────────────────────
+gaming:
+  enabled: false
+  gpu: "auto"                     # auto | amd | intel | nvidia |
+                                  # intel+nvidia | intel+amd | amd+amd | amd+nvidia | vm
+  steam_method: 1                 # 1=GLFS tarball (estable) | 2=SteamRT3 64-bit (experimental)
+  protonplus: false
+  kernel_psycachy: false
+  psycachy_scheduler: "bore"      # bore | eevdf
+  discord: false
+
+# ── Extras ───────────────────────────────────────────────────────────────────
+extras:
+  onlyoffice: false
+  qbittorrent: false
+  mullvad_vpn: false
+  obs_studio: false
+  obsidian: false
+  gradia: false                   # Gradia screenshot tool (compilado desde fuente)
+
+# ── Optimizaciones del sistema ───────────────────────────────────────────────
+system_tuning:
+  minimize_systemd: true
+  security_hardening: false       # UFW + sysctl + lockdown (puede romper NVIDIA DKMS)
+  auto_updates: "security"        # security | all | none
+  kernel_params: 1                # 1=Base | 2=Gaming | 3=Inseguro | 4=Mínimo
+
+# ── Optimizaciones de rendimiento (testear individualmente) ──────────────
+# Cada opción puede activarse por separado para medir su impacto.
+# Recomendado: activar una por una y comparar rendimiento/estabilidad.
+performance:
+  oomd_aggressive: true           # systemd-oomd thresholds agresivos (CachyOS)
+  tmpfiles_cleanup: true          # Limpieza automática de /tmp, cachés, journal
+  dns_over_tls: true              # systemd-resolved con DNS-over-TLS
+
+# ── Laptop (solo si is_laptop: true) ─────────────────────────────────────────
+laptop:
+  nothrottle: false               # Fix Intel thermal throttling
