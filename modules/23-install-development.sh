@@ -1,0 +1,726 @@
+#!/bin/bash
+# MÓDULO 23: Instalar herramientas de desarrollo
+# PRODUCE:  Git + build-essential + herramientas seleccionadas
+
+set -e
+[ -f "$(dirname "$0")/../partition.info" ] && source "$(dirname "$0")/../partition.info"
+
+
+# ── Cargar configuración desde config.yaml ────────────────────────────────────
+_YAML_FILE="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../config.yaml"
+_yaml_val() {
+    # Lee una clave de config.yaml: _yaml_val "section" "key" "default"
+    local section="$1" key="$2" default="${3:-}"
+    [ ! -f "$_YAML_FILE" ] && { echo "$default"; return; }
+    local in_section=false val=""
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*# || -z "${line// }" ]] && continue
+        if [[ "$line" =~ ^([a-z_]+):[[:space:]]*$ ]]; then
+            [ "${BASH_REMATCH[1]}" = "$section" ] && in_section=true || in_section=false
+            continue
+        fi
+        if $in_section && [[ "$line" =~ ^[[:space:]]+${key}:[[:space:]]+(.*) ]]; then
+            val="${BASH_REMATCH[1]}"
+            val="${val%%#*}"; val="${val%"${val##*[![:space:]]}"}";
+            val="${val#\"}" ; val="${val%\"}"; val="${val#\'}" ; val="${val%\'}"
+            echo "$val"; return
+        fi
+    done < "$_YAML_FILE"
+    echo "$default"
+}
+
+[ -z "${INSTALL_VSCODE:-}" ] && INSTALL_VSCODE=$(_yaml_val "development" "vscode" "false")
+NODEJS_OPTION="${NODEJS_OPTION:-2}"
+[ -z "${INSTALL_TOPGRADE:-}" ] && INSTALL_TOPGRADE=$(_yaml_val "development" "topgrade" "false")
+[ -z "${INSTALL_BOXES:-}" ] && INSTALL_BOXES=$(_yaml_val "development" "gnome_boxes" "false")
+[ -z "${INSTALL_LAZY_TOOLS:-}" ] && INSTALL_LAZY_TOOLS=$(_yaml_val "development" "lazy_tools" "false")
+[ -z "${INSTALL_DOCKER_TOOLS:-}" ] && INSTALL_DOCKER_TOOLS=$(_yaml_val "development" "docker_tools" "false")
+[ -z "${INSTALL_N8N:-}" ] && INSTALL_N8N=$(_yaml_val "development" "n8n" "false")
+[ -z "${INSTALL_MELD:-}" ] && INSTALL_MELD=$(_yaml_val "development" "meld" "false")
+[ -z "${INSTALL_POSTMAN:-}" ] && INSTALL_POSTMAN=$(_yaml_val "development" "postman" "false")
+[ -z "${INSTALL_NETTOOLS:-}" ] && INSTALL_NETTOOLS=$(_yaml_val "development" "nettools" "false")
+[ -z "${USERNAME:-}" ] && USERNAME=$(_yaml_val "system" "username" "")
+
+
+# Verificar que TARGET está montado y el chroot es funcional
+if ! mountpoint -q "${TARGET:-/mnt/ubuntu}" 2>/dev/null; then
+    echo "ERROR: TARGET=${TARGET:-/mnt/ubuntu} no está montado." >&2
+    exit 1
+fi
+if [ ! -x "${TARGET:-/mnt/ubuntu}/usr/bin/apt-get" ]; then
+    echo "ERROR: Chroot en ${TARGET:-/mnt/ubuntu} sin apt-get." >&2
+    exit 1
+fi
+
+
+echo "Instalando herramientas de desarrollo..."
+
+# ============================================================================
+# VARIABLES — todas vienen de install.sh (exportadas)
+# Si alguna no está seteada, se usa el default "n" (no instalar).
+# Las preguntas interactivas están SOLO en install.sh para evitar duplicación.
+# ============================================================================
+
+INSTALL_VSCODE="${INSTALL_VSCODE:-false}"
+NODEJS_OPTION="${NODEJS_OPTION:-2}"
+INSTALL_TOPGRADE="${INSTALL_TOPGRADE:-false}"
+INSTALL_BOXES="${INSTALL_BOXES:-false}"
+INSTALL_LAZY_TOOLS="${INSTALL_LAZY_TOOLS:-false}"
+INSTALL_DOCKER_TOOLS="${INSTALL_DOCKER_TOOLS:-false}"
+INSTALL_N8N="${INSTALL_N8N:-false}"
+INSTALL_MELD="${INSTALL_MELD:-false}"
+INSTALL_POSTMAN="${INSTALL_POSTMAN:-false}"
+INSTALL_NETTOOLS="${INSTALL_NETTOOLS:-false}"
+
+arch-chroot "$TARGET" /bin/bash << CHROOTEOF
+export DEBIAN_FRONTEND=noninteractive
+
+INSTALL_VSCODE="$INSTALL_VSCODE"
+NODEJS_OPTION="${NODEJS_OPTION:-2}"
+INSTALL_TOPGRADE="$INSTALL_TOPGRADE"
+USERNAME="$USERNAME"
+
+# ============================================================================
+# HERRAMIENTAS BASE
+# ============================================================================
+
+echo "Instalando herramientas base..."
+apt-get install -y \
+    git \
+    build-essential \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    autoconf \
+    automake \
+    pkg-config \
+    curl \
+    wget
+
+echo "✓  Herramientas base instaladas"
+
+# ============================================================================
+# RUST (rustup — instalación como usuario)
+# ============================================================================
+# Rust es necesario para compilar topgrade, herramientas cargo y otros.
+# Se instala como usuario (no root) via rustup — método oficial.
+
+USERNAME_CHROOT="\$USERNAME"
+if [ -n "\$USERNAME_CHROOT" ] && id "\$USERNAME_CHROOT" &>/dev/null; then
+    if [ -f "/home/\$USERNAME_CHROOT/.cargo/bin/rustc" ]; then
+        echo "✓  Rust ya instalado: \$(su - \$USERNAME_CHROOT -c 'rustc --version' 2>/dev/null)"
+    else
+        echo "Instalando Rust para \$USERNAME_CHROOT..."
+        cat > /tmp/install-rust.sh << 'RUSTUP_SCRIPT'
+#!/bin/bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+if command -v rustc &>/dev/null; then
+    echo "✓  Rust instalado: $(rustc --version), $(cargo --version)"
+else
+    echo "⚠  Error al instalar Rust"
+    exit 1
+fi
+RUSTUP_SCRIPT
+        chmod 755 /tmp/install-rust.sh
+        su - "\$USERNAME_CHROOT" -c "/tmp/install-rust.sh" || echo "⚠  Rust: instalación falló — se omite"
+        rm -f /tmp/install-rust.sh
+    fi
+else
+    echo "⚠  Usuario no encontrado — Rust no instalado"
+fi
+
+# Python
+apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv
+
+echo "✓  Herramientas base instaladas"
+
+# ============================================================================
+# NODEJS
+# ============================================================================
+
+if [ "\$NODEJS_OPTION" = "2" ]; then
+    echo "Instalando NodeJS LTS desde NodeSource..."
+    
+    # Limpiar repos anteriores de NodeSource si existen
+    rm -f /etc/apt/sources.list.d/nodesource.list
+    rm -f /etc/apt/sources.list.d/nodesource.sources
+    rm -f /usr/share/keyrings/nodesource.gpg
+    
+    # Crear directorio para keyrings
+    mkdir -p /etc/apt/keyrings
+    
+    # Descargar GPG key de NodeSource
+    echo "Descargando clave GPG de NodeSource..."
+    curl --max-time 30 --retry 3 -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | \
+        gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    
+    # Crear repositorio en formato DEB822
+    cat > /etc/apt/sources.list.d/nodesource.sources << NODESOURCE_EOF
+# NodeSource Node.js 24.x LTS (Krypton) Repository
+# Formato DEB822 (APT 3.0+)
+
+Types: deb
+URIs: https://deb.nodesource.com/node_24.x
+Suites: nodistro
+Components: main
+Signed-By: /etc/apt/keyrings/nodesource.gpg
+NODESOURCE_EOF
+    
+    echo "✓  Repositorio NodeSource configurado en formato DEB822"
+    _NEEDS_APT_UPDATE=true
+else
+    echo "⊘ NodeJS no instalado (puedes instalarlo después con: apt-get install nodejs npm)"
+fi
+
+# ============================================================================
+# VISUAL STUDIO CODE
+# ============================================================================
+
+if [ "\$INSTALL_VSCODE" = "true" ]; then
+    echo "Instalando Visual Studio Code desde Microsoft repo..."
+    
+    # Instalar dependencias
+    apt-get install -y \
+        software-properties-common \
+        apt-transport-https
+    
+    # Crear directorio para keyrings
+    mkdir -p /etc/apt/keyrings
+    
+    # Añadir repo Microsoft
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /tmp/microsoft.gpg
+    install -D -o root -g root -m 644 /tmp/microsoft.gpg /etc/apt/keyrings/microsoft.gpg
+    rm /tmp/microsoft.gpg
+    
+    # Crear repositorio en formato DEB822
+    cat > /etc/apt/sources.list.d/vscode.sources << VSCODE_EOF
+# Microsoft Visual Studio Code Repository
+# Formato DEB822 (APT 3.0+)
+
+Types: deb
+URIs: https://packages.microsoft.com/repos/code
+Suites: stable
+Components: main
+Architectures: amd64 arm64 armhf
+Signed-By: /etc/apt/keyrings/microsoft.gpg
+VSCODE_EOF
+    
+    echo "✓  Repositorio VSCode configurado en formato DEB822"
+    _NEEDS_APT_UPDATE=true
+else
+    echo "⊘ Visual Studio Code no instalado"
+fi
+
+# ============================================================================
+# GHOSTTY (terminal GPU-accelerated)
+# ============================================================================
+# PPA unofficial de mkasberg — método recomendado para Ubuntu/Debian.
+# Ref: https://github.com/mkasberg/ghostty-ubuntu
+# Alternativa: snap install ghostty --classic
+
+echo ""
+echo "Instalando Ghostty..."
+echo "  Ref: https://github.com/mkasberg/ghostty-ubuntu"
+
+GHOSTTY_OK=false
+
+# Script de instalación de mkasberg — compila .deb desde fuente
+MKASBERG_SCRIPT=\$(curl --max-time 30 -fsSL \
+    https://raw.githubusercontent.com/mkasberg/ghostty-ubuntu/HEAD/install.sh 2>/dev/null)
+
+if [ -n "\$MKASBERG_SCRIPT" ]; then
+    echo "\$MKASBERG_SCRIPT" | /bin/bash 2>&1 | tail -10
+    command -v ghostty >/dev/null 2>&1 && GHOSTTY_OK=true
+fi
+
+if [ "\$GHOSTTY_OK" = "true" ]; then
+    echo "  ✓ Ghostty instalado"
+
+    # ── Configuración por defecto para todos los usuarios ────────────────
+    # Ghostty lee config de ~/.config/ghostty/config (por usuario)
+    # y /etc/ghostty/config (system-wide, no oficial pero funciona).
+    # Usamos /etc/skel para que se copie a cada usuario nuevo.
+    USERNAME="$USERNAME"
+    if [ -n "\$USERNAME" ] && id "\$USERNAME" &>/dev/null; then
+        GHOSTTY_DIR="/home/\$USERNAME/.config/ghostty"
+        mkdir -p "\$GHOSTTY_DIR"
+        cat > "\$GHOSTTY_DIR/config" << 'GHOSTTYCFG'
+# Ghostty — configuración ubuntu-advanced-install
+background-opacity = 0.8
+theme = Adwaita Dark
+GHOSTTYCFG
+        chown -R "\$USERNAME":"\$USERNAME" "/home/\$USERNAME/.config/ghostty"
+        echo "  ✓ Config Ghostty: background-opacity=0.8, theme=Adwaita Dark"
+    fi
+
+    # También en skel para futuros usuarios
+    mkdir -p /etc/skel/.config/ghostty
+    cat > /etc/skel/.config/ghostty/config << 'GHOSTTYCFG'
+# Ghostty — configuración ubuntu-advanced-install
+background-opacity = 0.8
+theme = Adwaita Dark
+GHOSTTYCFG
+else
+    echo "  ⚠ Ghostty: instalación falló — https://github.com/mkasberg/ghostty-ubuntu"
+fi
+
+# ============================================================================
+# ============================================================================
+# RUST — instalado por módulo 07-install-rust.sh (CORE, siempre se ejecuta)
+# ============================================================================
+# No se instala aquí. Rust es base del sistema y se ejecuta como módulo CORE
+# independiente de INSTALL_DEVELOPMENT.
+
+# ============================================================================
+# TOPGRADE (actualizador universal)
+# ============================================================================
+# https://github.com/topgrade-rs/topgrade
+# .deb de GitHub releases — binario estático, sin dependencias de Rust.
+
+if [ "\$INSTALL_TOPGRADE" = "true" ]; then
+    echo ""
+    echo "Instalando Topgrade..."
+
+    TOPGRADE_DEB_URL=\$(curl --max-time 15 -s https://api.github.com/repos/topgrade-rs/topgrade/releases/latest \
+        | grep "browser_download_url.*amd64\.deb\"" | cut -d '"' -f 4 | head -1)
+
+    if [ -n "\$TOPGRADE_DEB_URL" ] \
+       && wget --timeout=30 --tries=2 -q "\$TOPGRADE_DEB_URL" -O /tmp/topgrade.deb; then
+        dpkg -i /tmp/topgrade.deb || true
+        apt-get install -f -y
+        rm -f /tmp/topgrade.deb
+
+        if command -v topgrade >/dev/null 2>&1; then
+            echo "  ✓ Topgrade instalado"
+        else
+            echo "  ⚠ Topgrade: instalación falló"
+        fi
+    else
+        echo "  ⚠ Topgrade: descarga falló — https://github.com/topgrade-rs/topgrade/releases"
+    fi
+else
+    echo "⊘ Topgrade no instalado"
+fi
+
+# ============================================================================
+# GNOME BOXES (máquinas virtuales)
+# ============================================================================
+# Gestor de VMs integrado en GNOME. Usa libvirt/QEMU por debajo.
+# Permite crear, ejecutar y gestionar máquinas virtuales con interfaz simple.
+# Soporta: ISOs locales, imágenes de disco, descargas automáticas de distros.
+
+INSTALL_BOXES_VAR="$INSTALL_BOXES"
+if [ "\$INSTALL_BOXES_VAR" = "true" ]; then
+    echo ""
+    echo "Instalando GNOME Boxes..."
+    apt-get install -y gnome-boxes
+    echo "✓  GNOME Boxes instalado"
+else
+    echo "⊘ GNOME Boxes no instalado"
+fi
+
+# ============================================================================
+# PYTHON PIP + VENV + CLI MODERNAS
+# ============================================================================
+echo ""
+echo "Instalando pip + venv + CLI modernas..."
+
+# Una sola llamada apt para todos los paquetes del repo de Ubuntu
+apt-get install -y python3-pip python3-venv fzf 2>/dev/null || true
+echo "  ✓ pip + venv + fzf"
+
+# ── eza — ls moderno con colores, iconos, Git ─────────────────────────────
+# Repo APT oficial de eza-community
+mkdir -p /etc/apt/keyrings
+wget -qO- https://raw.githubusercontent.com/eza-community/eza/main/deb.asc \
+    | gpg --dearmor -o /etc/apt/keyrings/gierens.gpg 2>/dev/null || true
+echo "deb [signed-by=/etc/apt/keyrings/gierens.gpg] http://deb.gierens.de stable main" \
+    > /etc/apt/sources.list.d/gierens.list
+chmod 644 /etc/apt/keyrings/gierens.gpg /etc/apt/sources.list.d/gierens.list 2>/dev/null || true
+_NEEDS_APT_UPDATE=true
+
+# ── Un solo apt-get update para todos los repos añadidos ──────────────────────
+if [ "\${_NEEDS_APT_UPDATE:-}" = "true" ]; then
+    echo ""
+    echo "Actualizando índice de paquetes (repos nuevos: NodeSource, VSCode, eza)..."
+    apt-get update 2>/dev/null || apt-get update
+    echo "✓  Índice actualizado"
+fi
+
+# ── Instalar paquetes de los repos recién añadidos ────────────────────────────
+if [ "\$NODEJS_OPTION" = "2" ]; then
+    apt-get install -y nodejs
+    echo "✓  NodeJS 24 LTS (Krypton) instalado (\$(node --version 2>/dev/null || echo 'pendiente'))"
+fi
+
+if [ "\$INSTALL_VSCODE" = "true" ]; then
+    apt-get install -y code
+    if command -v code &> /dev/null; then
+        echo "  ✓ Visual Studio Code instalado (\$(code --version | head -1))"
+    else
+        echo "  ⚠  Error al instalar VS Code desde repo"
+    fi
+fi
+
+apt-get install -y eza 2>/dev/null && echo "  ✓ eza" || echo "  ⚠ eza: instalación falló"
+
+# ── zoxide + yazi — descargas en paralelo ──────────────────────────────────
+# Obtener versiones y descargar en background para no esperar secuencialmente
+apt-get install -y unzip 2>/dev/null || true
+
+(
+    ZOXIDE_VER=\$(curl -s "https://api.github.com/repos/ajeetdsouza/zoxide/releases/latest" \
+        | grep -Po '"tag_name": "v\K[0-9.]+' 2>/dev/null || echo "")
+    [ -n "\$ZOXIDE_VER" ] && curl -Lo /tmp/zoxide.deb \
+        "https://github.com/ajeetdsouza/zoxide/releases/download/v\${ZOXIDE_VER}/zoxide_\${ZOXIDE_VER}-1_amd64.deb" 2>/dev/null
+) &
+PID_ZOXIDE=\$!
+
+(
+    YAZI_VER=\$(curl -s "https://api.github.com/repos/sxyazi/yazi/releases/latest" \
+        | grep -Po '"tag_name": "v\K[0-9.]+' 2>/dev/null || echo "")
+    [ -n "\$YAZI_VER" ] && curl -Lo /tmp/yazi.zip \
+        "https://github.com/sxyazi/yazi/releases/download/v\${YAZI_VER}/yazi-x86_64-unknown-linux-gnu.zip" 2>/dev/null
+) &
+PID_YAZI=\$!
+
+# Esperar a ambas descargas
+wait \$PID_ZOXIDE 2>/dev/null
+wait \$PID_YAZI 2>/dev/null
+
+# Instalar zoxide
+if [ -s /tmp/zoxide.deb ]; then
+    dpkg -i /tmp/zoxide.deb 2>/dev/null && echo "  ✓ zoxide" || echo "  ⚠ zoxide: instalación falló"
+    rm -f /tmp/zoxide.deb
+fi
+
+# Instalar yazi
+if [ -s /tmp/yazi.zip ]; then
+    unzip -o /tmp/yazi.zip -d /tmp/yazi-extract 2>/dev/null
+    install /tmp/yazi-extract/yazi-x86_64-unknown-linux-gnu/yazi /usr/local/bin/yazi 2>/dev/null
+    install /tmp/yazi-extract/yazi-x86_64-unknown-linux-gnu/ya /usr/local/bin/ya 2>/dev/null
+    rm -rf /tmp/yazi.zip /tmp/yazi-extract
+    echo "  ✓ yazi"
+fi
+
+# Aliases eza + zoxide en skel .bashrc
+if command -v eza >/dev/null 2>&1; then
+    if ! grep -q "alias ls=" /etc/skel/.bashrc 2>/dev/null; then
+        cat >> /etc/skel/.bashrc << 'EZA_ALIASES'
+
+# eza (ls moderno)
+alias ls='eza'
+alias ll='eza -l --icons --group-directories-first'
+alias la='eza -la --icons --group-directories-first'
+alias tree='eza --tree --icons'
+EZA_ALIASES
+    fi
+fi
+if command -v zoxide >/dev/null 2>&1; then
+    if ! grep -q "zoxide init" /etc/skel/.bashrc 2>/dev/null; then
+        echo 'eval "$(zoxide init bash)"' >> /etc/skel/.bashrc
+    fi
+fi
+
+echo "✓  CLI modernas instaladas"
+
+# ============================================================================
+# ============================================================================
+# DOCKER TOOLS (unregistry, docker-pussh, uncloud)
+# ============================================================================
+INSTALL_DOCKER_TOOLS_VAR="$INSTALL_DOCKER_TOOLS"
+
+if [ "\$INSTALL_DOCKER_TOOLS_VAR" = "true" ]; then
+    echo ""
+    echo "Instalando Docker tools (unregistry + docker-pussh + uncloud)..."
+
+    for tool in unregistry docker-pussh uncloud; do
+        case \$tool in
+            unregistry) REPO="psviderski/unregistry"; BIN="unregistry" ;;
+            docker-pussh) REPO="psviderski/unregistry"; BIN="docker-pussh" ;;
+            uncloud) REPO="psviderski/uncloud"; BIN="uc" ;;
+        esac
+
+        TOOL_VER=\$(curl -s "https://api.github.com/repos/\$REPO/releases/latest" \
+            | grep -Po '"tag_name": "v\K[0-9.]+' 2>/dev/null || echo "")
+        if [ -n "\$TOOL_VER" ]; then
+            curl -Lo "/tmp/\${tool}.tar.gz" \
+                "https://github.com/\${REPO}/releases/download/v\${TOOL_VER}/\${BIN}_linux_amd64.tar.gz" 2>/dev/null
+            if [ -s "/tmp/\${tool}.tar.gz" ]; then
+                tar xf "/tmp/\${tool}.tar.gz" -C /tmp "\$BIN" 2>/dev/null
+                install "/tmp/\$BIN" "/usr/local/bin/\$BIN" 2>/dev/null
+                rm -f "/tmp/\${tool}.tar.gz" "/tmp/\$BIN"
+                echo "  ✓ \$tool \$TOOL_VER"
+            fi
+        else
+            echo "  ⚠ \$tool: no se pudo obtener versión"
+        fi
+    done
+
+    # docker-pussh se instala como plugin de Docker CLI
+    mkdir -p /usr/local/lib/docker/cli-plugins
+    if [ -f /usr/local/bin/docker-pussh ]; then
+        ln -sf /usr/local/bin/docker-pussh /usr/local/lib/docker/cli-plugins/docker-pussh
+        echo "  ✓ docker-pussh registrado como plugin Docker CLI"
+    fi
+
+    echo "✓  Docker tools instalados"
+else
+    echo "⊘ Docker tools (unregistry/pussh/uncloud) no instalados"
+fi
+
+# ============================================================================
+# MELD (diff visual)
+# ============================================================================
+INSTALL_MELD_VAR="$INSTALL_MELD"
+
+if [ "\$INSTALL_MELD_VAR" = "true" ]; then
+    echo ""
+    echo "Instalando Meld..."
+    apt-get install -y meld
+    echo "✓  Meld instalado"
+    # Configurar como diff tool por defecto de Git
+    git config --system diff.tool meld 2>/dev/null || true
+    git config --system merge.tool meld 2>/dev/null || true
+    echo "  ✓ Meld configurado como diff/merge tool de Git"
+else
+    echo "⊘ Meld no instalado"
+fi
+
+# ============================================================================
+# POSTMAN (API testing)
+# ============================================================================
+INSTALL_POSTMAN_VAR="$INSTALL_POSTMAN"
+
+if [ "\$INSTALL_POSTMAN_VAR" = "true" ]; then
+    echo ""
+    echo "Instalando Postman..."
+    curl -Lo /tmp/postman.tar.gz "https://dl.pstmn.io/download/latest/linux_64" 2>/dev/null
+    if [ -s /tmp/postman.tar.gz ]; then
+        tar xf /tmp/postman.tar.gz -C /opt/ 2>/dev/null
+        ln -sf /opt/Postman/Postman /usr/local/bin/postman
+        # Desktop entry
+        cat > /usr/share/applications/postman.desktop << 'POSTMAN_DESKTOP'
+[Desktop Entry]
+Name=Postman
+GenericName=API Client
+Exec=/opt/Postman/Postman
+Icon=/opt/Postman/app/resources/app/assets/icon.png
+Terminal=false
+Type=Application
+Categories=Development;
+POSTMAN_DESKTOP
+        rm -f /tmp/postman.tar.gz
+        echo "✓  Postman instalado"
+    else
+        echo "⚠  Postman: descarga falló"
+    fi
+else
+    echo "⊘ Postman no instalado"
+fi
+
+# ============================================================================
+# N8N (automatización de workflows)
+# ============================================================================
+# n8n es una plataforma de automatización de workflows con interfaz visual.
+# Se instala globalmente via npm. Requiere Node.js.
+# Ref: https://docs.n8n.io/hosting/installation/npm/
+
+INSTALL_N8N_VAR="$INSTALL_N8N"
+
+if [ "\$INSTALL_N8N_VAR" = "true" ]; then
+    echo ""
+    echo "Instalando n8n..."
+
+    if command -v npm &>/dev/null; then
+        npm install -g n8n 2>/dev/null
+        if command -v n8n &>/dev/null; then
+            echo "✓  n8n instalado (\$(n8n --version 2>/dev/null || echo 'versión desconocida'))"
+            echo "   Ejecutar: n8n start"
+            echo "   Acceder: http://localhost:5678"
+        else
+            echo "⚠  n8n: instalación npm falló"
+        fi
+    else
+        echo "⚠  n8n requiere Node.js — instálalo primero"
+    fi
+else
+    echo "⊘ n8n no instalado"
+fi
+
+# ============================================================================
+# HERRAMIENTAS DE RED Y CLOUD (Wireshark, nmap, AWS CLI, httpie, jq)
+# ============================================================================
+INSTALL_NETTOOLS_VAR="$INSTALL_NETTOOLS"
+
+if [ "\$INSTALL_NETTOOLS_VAR" = "true" ]; then
+    echo ""
+    echo "Instalando herramientas de red y cloud..."
+
+    # nmap + jq + httpie — repos Ubuntu, una sola llamada
+    apt-get install -y nmap jq httpie 2>/dev/null || true
+    echo "  ✓ nmap + jq + httpie"
+
+    # Wireshark — sin prompt interactivo de dumpcap
+    DEBIAN_FRONTEND=noninteractive apt-get install -y wireshark tshark 2>/dev/null || true
+    # Permitir captura sin root para el usuario principal
+    USERNAME_VAR="$USERNAME"
+    if [ -n "\$USERNAME_VAR" ]; then
+        usermod -aG wireshark "\$USERNAME_VAR" 2>/dev/null || true
+    fi
+    echo "  ✓ Wireshark + tshark (grupo wireshark añadido)"
+
+    # AWS CLI v2 — instalador oficial de Amazon
+    # Deps de instalación: curl, unzip
+    # Deps de runtime: groff (para aws help), less (pager por defecto)
+    # Ref: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+    echo "  Instalando AWS CLI v2..."
+    apt-get install -y unzip curl groff less 2>/dev/null || true
+    curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip 2>/dev/null
+    if [ -s /tmp/awscliv2.zip ]; then
+        unzip -o /tmp/awscliv2.zip -d /tmp/aws-install 2>/dev/null
+        /tmp/aws-install/aws/install --update 2>/dev/null || /tmp/aws-install/aws/install 2>/dev/null
+        rm -rf /tmp/awscliv2.zip /tmp/aws-install
+        if command -v aws >/dev/null 2>&1; then
+            echo "  ✓ AWS CLI v2: \$(aws --version 2>/dev/null | cut -d' ' -f1)"
+        else
+            echo "  ✓ AWS CLI v2 instalado en /usr/local/bin/aws"
+        fi
+    else
+        echo "  ⚠ AWS CLI v2: descarga falló"
+    fi
+
+    echo "✓  Herramientas de red y cloud instaladas"
+else
+    echo "⊘ Herramientas de red y cloud no instaladas"
+fi
+
+# ============================================================================
+# LAZY TUI TOOLS (lazygit, lazydocker, LazyVim)
+# ============================================================================
+# Binarios precompilados de GitHub releases + neovim con config LazyVim.
+# Se instalan solo si el usuario lo pidió.
+
+INSTALL_LAZY_VAR="$INSTALL_LAZY_TOOLS"
+
+if [ "\$INSTALL_LAZY_VAR" = "true" ]; then
+    echo ""
+    echo "Instalando lazy TUI tools..."
+
+    # ── lazygit — TUI para Git ────────────────────────────────────────────────
+    LAZYGIT_VER=\$(curl -s "https://api.github.com/repos/jesseduffield/lazygit/releases/latest" \
+        | grep -Po '"tag_name": "v\K[0-9.]+' 2>/dev/null || echo "")
+    if [ -n "\$LAZYGIT_VER" ]; then
+        curl -Lo /tmp/lazygit.tar.gz \
+            "https://github.com/jesseduffield/lazygit/releases/download/v\${LAZYGIT_VER}/lazygit_\${LAZYGIT_VER}_Linux_x86_64.tar.gz" 2>/dev/null
+        if [ -s /tmp/lazygit.tar.gz ]; then
+            tar xf /tmp/lazygit.tar.gz -C /tmp lazygit 2>/dev/null
+            install /tmp/lazygit /usr/local/bin/lazygit
+            rm -f /tmp/lazygit /tmp/lazygit.tar.gz
+            echo "  ✓ lazygit \$LAZYGIT_VER instalado"
+        fi
+    else
+        echo "  ⚠ lazygit: no se pudo obtener versión"
+    fi
+
+    # ── lazydocker — TUI para Docker ──────────────────────────────────────────
+    LAZYDOCKER_VER=\$(curl -s "https://api.github.com/repos/jesseduffield/lazydocker/releases/latest" \
+        | grep -Po '"tag_name": "v\K[0-9.]+' 2>/dev/null || echo "")
+    if [ -n "\$LAZYDOCKER_VER" ]; then
+        curl -Lo /tmp/lazydocker.tar.gz \
+            "https://github.com/jesseduffield/lazydocker/releases/download/v\${LAZYDOCKER_VER}/lazydocker_\${LAZYDOCKER_VER}_Linux_x86_64.tar.gz" 2>/dev/null
+        if [ -s /tmp/lazydocker.tar.gz ]; then
+            tar xf /tmp/lazydocker.tar.gz -C /tmp lazydocker 2>/dev/null
+            install /tmp/lazydocker /usr/local/bin/lazydocker
+            rm -f /tmp/lazydocker /tmp/lazydocker.tar.gz
+            echo "  ✓ lazydocker \$LAZYDOCKER_VER instalado"
+        fi
+    else
+        echo "  ⚠ lazydocker: no se pudo obtener versión"
+    fi
+
+    # ── LazyVim — Neovim con config IDE preconfigurada ────────────────────────
+    # Requisitos: neovim ≥0.9, git, ripgrep, fd-find, fzf, lazygit
+    apt-get install -y neovim ripgrep fd-find fzf 2>/dev/null || true
+
+    # Clonar starter template de LazyVim en skel (todos los usuarios)
+    if command -v nvim >/dev/null 2>&1; then
+        NVIM_VER=\$(nvim --version 2>/dev/null | head -1 || echo "")
+        echo "  Neovim: \$NVIM_VER"
+
+        # skel — futuros usuarios
+        mkdir -p /etc/skel/.config
+        git clone --depth 1 https://github.com/LazyVim/starter.git \
+            /etc/skel/.config/nvim 2>/dev/null || true
+        rm -rf /etc/skel/.config/nvim/.git
+
+        # Usuario principal
+        USERNAME_VAR="$USERNAME"
+        if [ -n "\$USERNAME_VAR" ] && [ -d "/home/\$USERNAME_VAR" ]; then
+            mkdir -p "/home/\$USERNAME_VAR/.config"
+            if [ ! -d "/home/\$USERNAME_VAR/.config/nvim" ]; then
+                cp -r /etc/skel/.config/nvim "/home/\$USERNAME_VAR/.config/nvim"
+                chown -R "\$USERNAME_VAR:\$USERNAME_VAR" "/home/\$USERNAME_VAR/.config/nvim"
+            fi
+        fi
+        echo "  ✓ LazyVim starter clonado (plugins se instalan en primer arranque)"
+    else
+        echo "  ⚠ LazyVim: neovim no disponible"
+    fi
+
+    echo "✓  Lazy TUI tools instalados"
+else
+    echo "⊘ Lazy TUI tools no instalados"
+fi
+
+exit 0
+CHROOTEOF
+
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "  HERRAMIENTAS DE DESARROLLO INSTALADAS"
+echo "════════════════════════════════════════════════════════════════"
+echo "  ✓ Git, build-essential, Python"
+echo "  ✓ Ghostty (terminal GPU-accelerated)"
+if [[ "${NODEJS_OPTION:-2}" != "1" ]]; then
+    echo "  ✓ NodeJS LTS (NodeSource)"
+fi
+if [ "${INSTALL_VSCODE:-false}" = "true" ]; then
+    echo "  ✓ Visual Studio Code (Microsoft repo)"
+fi
+echo "  ✓ Rust (instalado por módulo 07)"
+if [ "${INSTALL_TOPGRADE:-false}" = "true" ]; then
+    echo "  ✓ Topgrade (actualizador universal: topgrade)"
+fi
+if [ "${INSTALL_BOXES:-false}" = "true" ]; then
+    echo "  ✓ GNOME Boxes (máquinas virtuales)"
+fi
+if [ "${INSTALL_LAZY_TOOLS:-false}" = "true" ]; then
+    echo "  ✓ lazygit + lazydocker + LazyVim (TUI tools)"
+fi
+echo "  ✓ pip + venv (Python)"
+echo "  ✓ eza + fzf + zoxide + yazi (CLI modernas)"
+if [ "${INSTALL_DOCKER_TOOLS:-false}" = "true" ]; then
+    echo "  ✓ unregistry + docker-pussh + uncloud"
+fi
+if [ "${INSTALL_N8N:-false}" = "true" ]; then
+    echo "  ✓ n8n (automatización de workflows)"
+fi
+if [ "${INSTALL_MELD:-false}" = "true" ]; then
+    echo "  ✓ Meld (diff/merge visual + Git)"
+fi
+if [ "${INSTALL_POSTMAN:-false}" = "true" ]; then
+    echo "  ✓ Postman (API testing)"
+fi
+if [ "${INSTALL_NETTOOLS:-false}" = "true" ]; then
+    echo "  ✓ Wireshark + nmap + AWS CLI v2 + httpie + jq"
+fi
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+
+exit 0
